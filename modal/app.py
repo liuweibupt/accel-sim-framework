@@ -16,6 +16,8 @@ _FETCH_CUTLASS_SCRIPT = _MODAL_ROOT / "scripts" / "fetch_cutlass.sh"
 _BUILD_RUNNER_SCRIPT = _MODAL_ROOT / "scripts" / "build_cutlass_runner.sh"
 _BUILD_TRACER_SCRIPT = _MODAL_ROOT / "scripts" / "build_tracer.sh"
 _RUN_TRACE_JOB_SCRIPT = _MODAL_ROOT / "scripts" / "run_trace_job.sh"
+_DOWNLOAD_ARTIFACTS_SCRIPT = _MODAL_ROOT / "scripts" / "download_artifacts.py"
+_REPLAY_WITH_ACCELSIM_SCRIPT = _MODAL_ROOT / "scripts" / "replay_with_accelsim.sh"
 
 
 @app.function()
@@ -33,12 +35,15 @@ def validate_environment() -> dict[str, object]:
         "build_cutlass_runner_script": str(_BUILD_RUNNER_SCRIPT),
         "build_tracer_script": str(_BUILD_TRACER_SCRIPT),
         "run_trace_job_script": str(_RUN_TRACE_JOB_SCRIPT),
+        "download_artifacts_script": str(_DOWNLOAD_ARTIFACTS_SCRIPT),
+        "replay_with_accelsim_script": str(_REPLAY_WITH_ACCELSIM_SCRIPT),
         "tracer_root": str(_MODAL_ROOT.parent / "util" / "tracer_nvbit"),
         "default_trace_env": {
             "TRACES_FOLDER": str(_MODAL_ROOT / "artifacts" / "trace_job"),
             "TOOL_COMPRESS": "0",
             "TRACE_FILE_COMPRESS": "0",
         },
+        "artifacts_root": str(_MODAL_ROOT / "artifacts"),
         "repo_root": str(_MODAL_ROOT.parent),
         "cwd": os.getcwd(),
     }
