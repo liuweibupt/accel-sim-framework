@@ -41,3 +41,16 @@ Replay a trace directory locally with the repository's `SM80_A100` configs:
 ```sh
 bash modal/scripts/replay_with_accelsim.sh modal/artifacts/<job-name>/traces
 ```
+
+## Verified A100 trace runs
+
+The following end-to-end runs have been completed and replayed locally with Accel-Sim's `SM80_A100` configuration:
+
+- `fp16-512x512x512`
+  - trace: `modal/artifacts/fp16-512x512x512/traces/`
+  - replay log: `modal/artifacts/fp16-512x512x512/sim_run/sim.out`
+- `bf16-512x512x512`
+  - trace: `modal/artifacts/bf16-512x512x512/traces/`
+  - replay log: `modal/artifacts/bf16-512x512x512/sim_run/sim.out`
+
+See `modal/results/summary.md` for the replay metrics and current limitations.
