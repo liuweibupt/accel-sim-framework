@@ -1,10 +1,12 @@
-"""Minimal scaffold for the accelsim-cutlass-trace Modal app."""
+"""Modal app for CUTLASS GEMM trace capture on A100."""
 from __future__ import annotations
 
 import os
 import platform
 import shutil
+import subprocess
 import sys
+import time
 from pathlib import Path
 
 import modal
@@ -12,17 +14,54 @@ import modal
 app = modal.App(name="accelsim-cutlass-trace")
 
 _MODAL_ROOT = Path(__file__).resolve().parent
-_FETCH_CUTLASS_SCRIPT = _MODAL_ROOT / "scripts" / "fetch_cutlass.sh"
-_BUILD_RUNNER_SCRIPT = _MODAL_ROOT / "scripts" / "build_cutlass_runner.sh"
-_BUILD_TRACER_SCRIPT = _MODAL_ROOT / "scripts" / "build_tracer.sh"
-_RUN_TRACE_JOB_SCRIPT = _MODAL_ROOT / "scripts" / "run_trace_job.sh"
+_REPO_ROOT = _MODAL_ROOT.parent
+_FETCH_CUTLASS_SCRIPT = Path("/root/project/modal/scripts/fetch_cutlass.sh")
+_BUILD_RUNNER_SCRIPT = Path("/root/project/modal/scripts/build_cutlass_runner.sh")
+_BUILD_TRACER_SCRIPT = Path("/root/project/modal/scripts/build_tracer.sh")
+_RUN_TRACE_JOB_SCRIPT = Path("/root/project/modal/scripts/run_trace_job.sh")
 _DOWNLOAD_ARTIFACTS_SCRIPT = _MODAL_ROOT / "scripts" / "download_artifacts.py"
 _REPLAY_WITH_ACCELSIM_SCRIPT = _MODAL_ROOT / "scripts" / "replay_with_accelsim.sh"
+_ARTIFACT_VOLUME_NAME = "accelsim-cutlass-traces"
+_ARTIFACTS_ROOT = _MODAL_ROOT / "artifacts"
+
+image = (
+    modal.Image.from_registry("nvidia/cuda:12.8.1-devel-ubuntu24.04", add_python="3.12")
+    .apt_install(
+        "git",
+        "build-essential",
+        "cmake",
+        "wget",
+        "xz-utils",
+        "bc",
+    )
+    .add_local_file(str(_MODAL_ROOT / "app.py"), remote_path="/root/project/modal/app.py")
+    .add_local_file(str(_MODAL_ROOT / "requirements.txt"), remote_path="/root/project/modal/requirements.txt")
+    .add_local_dir(str(_MODAL_ROOT / "scripts"), remote_path="/root/project/modal/scripts", copy=True)
+    .add_local_dir(str(_MODAL_ROOT / "cutlass_runner"), remote_path="/root/project/modal/cutlass_runner", copy=True)
+    .add_local_dir(str(_REPO_ROOT / "util" / "tracer_nvbit"), remote_path="/root/project/util/tracer_nvbit", copy=True)
+    .run_commands(
+        "cd /root/project && bash modal/scripts/fetch_cutlass.sh",
+        "cd /root/project && bash modal/scripts/build_cutlass_runner.sh",
+        "cd /root/project && ARCH=sm_80 bash modal/scripts/build_tracer.sh",
+    )
+)
+
+trace_volume = modal.Volume.from_name(_ARTIFACT_VOLUME_NAME, create_if_missing=True)
+
+
+def _validate_shape(m: int, n: int, k: int) -> None:
+    allowed = {(512, 512, 512), (512, 12288, 12288)}
+    if (m, n, k) not in allowed:
+        raise ValueError(f"unsupported shape {(m, n, k)}; allowed shapes: {sorted(allowed)}")
+
+
+def _default_job_name(dtype: str, m: int, n: int, k: int) -> str:
+    return f"{dtype}-{m}x{n}x{k}-{int(time.time())}"
 
 
 @app.function()
 def validate_environment() -> dict[str, object]:
-    """Return lightweight environment information without raising."""
+    """Return lightweight local environment information without raising."""
     nvcc_path = shutil.which("nvcc")
     cuda_12_8 = Path("/usr/local/cuda-12.8/bin/nvcc")
     return {
@@ -31,19 +70,91 @@ def validate_environment() -> dict[str, object]:
         "nvcc_in_path": nvcc_path is not None,
         "nvcc_path": nvcc_path,
         "cuda_12_8_present": cuda_12_8.exists(),
-        "fetch_cutlass_script": str(_FETCH_CUTLASS_SCRIPT),
-        "build_cutlass_runner_script": str(_BUILD_RUNNER_SCRIPT),
-        "build_tracer_script": str(_BUILD_TRACER_SCRIPT),
-        "run_trace_job_script": str(_RUN_TRACE_JOB_SCRIPT),
         "download_artifacts_script": str(_DOWNLOAD_ARTIFACTS_SCRIPT),
         "replay_with_accelsim_script": str(_REPLAY_WITH_ACCELSIM_SCRIPT),
-        "tracer_root": str(_MODAL_ROOT.parent / "util" / "tracer_nvbit"),
-        "default_trace_env": {
-            "TRACES_FOLDER": str(_MODAL_ROOT / "artifacts" / "trace_job"),
-            "TOOL_COMPRESS": "0",
-            "TRACE_FILE_COMPRESS": "0",
-        },
-        "artifacts_root": str(_MODAL_ROOT / "artifacts"),
-        "repo_root": str(_MODAL_ROOT.parent),
+        "artifact_volume_name": _ARTIFACT_VOLUME_NAME,
+        "artifacts_root": str(_ARTIFACTS_ROOT),
+        "repo_root": str(_REPO_ROOT),
         "cwd": os.getcwd(),
     }
+
+
+@app.function(
+    image=image,
+    gpu="A100-80GB",
+    cpu=8,
+    memory=32768,
+    timeout=60 * 20,
+    ephemeral_disk=100000,
+    volumes={"/artifacts": trace_volume},
+)
+def run_trace(dtype: str = "fp16", m: int = 512, n: int = 512, k: int = 512, job_name: str = "") -> dict[str, object]:
+    _validate_shape(m, n, k)
+    if dtype not in {"fp16", "bf16"}:
+        raise ValueError("dtype must be fp16 or bf16")
+    if not job_name:
+        job_name = _default_job_name(dtype, m, n, k)
+
+    trace_root = Path("/artifacts") / job_name
+    env = os.environ.copy()
+    env["TRACES_FOLDER"] = str(trace_root)
+    env.setdefault("TOOL_COMPRESS", "0")
+    env.setdefault("TRACE_FILE_COMPRESS", "0")
+
+    cmd = [
+        str(_RUN_TRACE_JOB_SCRIPT),
+        "--dtype",
+        dtype,
+        "--m",
+        str(m),
+        "--n",
+        str(n),
+        "--k",
+        str(k),
+    ]
+    subprocess.run(cmd, cwd="/root/project", env=env, check=True)
+    trace_volume.commit()
+
+    trace_dir = trace_root / "traces"
+    files = []
+    if trace_dir.exists():
+        files = sorted(str(p.relative_to(trace_root)) for p in trace_dir.rglob("*") if p.is_file())
+
+    return {
+        "job_name": job_name,
+        "dtype": dtype,
+        "shape": [m, n, k],
+        "gpu": "A100-80GB",
+        "artifact_volume": _ARTIFACT_VOLUME_NAME,
+        "remote_artifact_root": str(trace_root),
+        "remote_trace_dir": str(trace_dir),
+        "files": files,
+    }
+
+
+@app.local_entrypoint()
+def main(dtype: str = "fp16", m: int = 512, n: int = 512, k: int = 512, job_name: str = "", skip_download: bool = False):
+    result = run_trace.remote(dtype=dtype, m=m, n=n, k=k, job_name=job_name)
+    print(result)
+
+    if skip_download:
+        return
+
+    local_dest = _ARTIFACTS_ROOT / result["job_name"]
+    local_dest.parent.mkdir(parents=True, exist_ok=True)
+    subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "modal",
+            "volume",
+            "get",
+            _ARTIFACT_VOLUME_NAME,
+            f"/{result['job_name']}",
+            str(local_dest),
+            "--force",
+        ],
+        cwd="/tmp",
+        check=True,
+    )
+    print(f"downloaded_artifacts={local_dest}")
