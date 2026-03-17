@@ -4,11 +4,18 @@ This directory contains the initial Modal scaffold for the `accelsim-cutlass-tra
 
 ## Usage
 
+Create a local virtual environment at the repository root (or adapt the Python path below to your own environment):
+
+```sh
+python3 -m venv .venv
+. .venv/bin/activate
+pip install -r requirements.txt
+```
+
 Run Modal from inside this directory so the local `modal/` folder does not shadow the installed Modal package:
 
 ```sh
 cd modal
-python -m pip install -r requirements.txt
 ../.venv/bin/python -m modal run app.py::validate_environment
 ```
 

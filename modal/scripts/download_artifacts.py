@@ -6,6 +6,7 @@ This is intentionally local-only for now; no remote Modal download flow is imple
 from __future__ import annotations
 
 import argparse
+import re
 import shutil
 from pathlib import Path
 
@@ -13,6 +14,17 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_SOURCE_DIR = REPO_ROOT / "modal" / "artifacts" / "trace_job"
 DEFAULT_ARTIFACTS_ROOT = REPO_ROOT / "modal" / "artifacts"
+
+_JOB_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
+
+
+def validate_job_name(job_name: str) -> str:
+    if not _JOB_NAME_RE.fullmatch(job_name):
+        raise ValueError(
+            "job_name must contain only letters, numbers, dot, underscore, or dash "
+            "and must not include path separators"
+        )
+    return job_name
 
 
 def parse_args() -> argparse.Namespace:
@@ -41,7 +53,15 @@ def main() -> int:
 
     source_dir = Path(args.source_dir).resolve()
     artifacts_root = Path(args.artifacts_root).resolve()
-    destination_dir = artifacts_root / args.job_name
+    try:
+        job_name = validate_job_name(args.job_name)
+    except ValueError as exc:
+        print(f"[download_artifacts] ERROR: {exc}")
+        return 1
+    destination_dir = (artifacts_root / job_name).resolve()
+    if artifacts_root not in destination_dir.parents:
+        print("[download_artifacts] ERROR: destination escapes artifacts root")
+        return 1
 
     if not source_dir.is_dir():
         print(f"[download_artifacts] ERROR: source directory not found: {source_dir}")
