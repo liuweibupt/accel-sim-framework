@@ -85,7 +85,7 @@ def validate_environment() -> dict[str, object]:
     cpu=8,
     memory=32768,
     timeout=60 * 20,
-    ephemeral_disk=100000,
+    ephemeral_disk=524288,
     volumes={"/artifacts": trace_volume},
 )
 def run_trace(dtype: str = "fp16", m: int = 512, n: int = 512, k: int = 512, job_name: str = "") -> dict[str, object]:
