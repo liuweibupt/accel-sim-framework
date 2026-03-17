@@ -34,8 +34,8 @@ image = (
         "xz-utils",
         "bc",
     )
-    .add_local_file(str(_MODAL_ROOT / "app.py"), remote_path="/root/project/modal/app.py")
-    .add_local_file(str(_MODAL_ROOT / "requirements.txt"), remote_path="/root/project/modal/requirements.txt")
+    .add_local_file(str(_MODAL_ROOT / "app.py"), remote_path="/root/project/modal/app.py", copy=True)
+    .add_local_file(str(_MODAL_ROOT / "requirements.txt"), remote_path="/root/project/modal/requirements.txt", copy=True)
     .add_local_dir(str(_MODAL_ROOT / "scripts"), remote_path="/root/project/modal/scripts", copy=True)
     .add_local_dir(str(_MODAL_ROOT / "cutlass_runner"), remote_path="/root/project/modal/cutlass_runner", copy=True)
     .add_local_dir(str(_REPO_ROOT / "util" / "tracer_nvbit"), remote_path="/root/project/util/tracer_nvbit", copy=True)
