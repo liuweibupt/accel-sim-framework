@@ -10,7 +10,7 @@ import modal
 app = modal.App(name="accelsim-cutlass-trace")
 
 
-@modal.function()
+@app.function()
 def validate_environment() -> dict[str, object]:
     """Return lightweight environment information without raising."""
     nvcc_path = shutil.which("nvcc")

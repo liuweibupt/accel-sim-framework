@@ -1,14 +1,15 @@
 # Modal accelsim-cutlass-trace scaffold
 
-This package defines the `accelsim-cutlass-trace` Modal application. It currently exposes a lightweight environment validation helper.
+This directory contains the initial Modal scaffold for the `accelsim-cutlass-trace` workflow.
 
 ## Usage
 
-Install the Modal dependency and run the helper via the python module mode:
+Run Modal from inside this directory so the local `modal/` folder does not shadow the installed Modal package:
 
 ```sh
-python -m pip install -r modal/requirements.txt
-python -m modal modal.app validate_environment
+cd modal
+python -m pip install -r requirements.txt
+../.venv/bin/python -m modal run app.py::validate_environment
 ```
 
-Using the `python -m modal ...` entry point keeps the tooling aligned with package-style workflows while this scaffold remains minimal.
+The current app only exposes a lightweight environment validation helper.
