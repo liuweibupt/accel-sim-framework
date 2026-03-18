@@ -45,6 +45,9 @@ GV100:
 A100:
     base_file: "$GPGPUSIM_ROOT/configs/tested-cfgs/SM80_A100/gpgpusim.config"
 
+A100_LPDDR5X:
+    base_file: "$GPGPUSIM_ROOT/configs/tested-cfgs/SM80_A100_LPDDR5X/gpgpusim.config"
+
 # Fermi
 GTX480:
     base_file: "$GPGPUSIM_ROOT/configs/tested-cfgs/SM2_GTX480/gpgpusim.config"
