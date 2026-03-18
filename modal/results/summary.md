@@ -99,6 +99,12 @@ A larger FP16 GEMM was captured on Modal A100-80GB using cuBLASLt/CUTLASS-genera
   - CTA assignment has progressed through many shader bindings / thread blocks
 - Final metrics such as `gpu_tot_sim_cycle` are not yet available at the time of this update.
 
+## Barrier root cause and repair update
+
+The large `2048x12288x12288` replay failure was traced to trace-driven `OP_BAR` decoding collapsing distinct `BAR.SYNC.DEFER_BLOCKING` phases into a single barrier id (`bar_id = 0`). Runtime barrier instrumentation on the failing kernel showed repeated barrier traffic all landing in the same simulator slot, which is consistent with the placeholder logic in `gpu-simulator/trace-driven/trace_driven.cc`.
+
+A minimal repair has now been implemented: trace-driven `OP_BAR` uses a stable PC-derived synthetic barrier id instead of always using `0`. Early validation shows the large replay now produces non-zero barrier ids (for example `bar=7` and `bar=10`) and no longer immediately reproduces the original teardown assertion during the short probe window. A fresh full replay is now running with the repaired binary.
+
 ## Notes
 - The small `512x512x512` kernels were chosen first to keep Modal cost and turnaround low.
 - The large trace artifacts are intentionally kept out of git because of their size.
