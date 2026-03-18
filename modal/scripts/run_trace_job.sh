@@ -5,7 +5,51 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 TRACER_TOOL_SO="${REPO_ROOT}/util/tracer_nvbit/tracer_tool/tracer_tool.so"
 POST_PROCESSOR="${REPO_ROOT}/util/tracer_nvbit/tracer_tool/traces-processing/post-traces-processing"
-RUNNER_BIN="${REPO_ROOT}/modal/cutlass_runner/build/cutlass_runner"
+DEFAULT_CUTLASS_RUNNER="${REPO_ROOT}/modal/cutlass_runner/build/cutlass_runner"
+DEFAULT_CUBLASLT_RUNNER="${REPO_ROOT}/modal/cublaslt_runner/build/cublaslt_runner"
+RUNNER_KIND="${RUNNER_KIND:-cutlass}"
+RUNNER_BIN="${RUNNER_BIN:-}"
+
+runner_args=()
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --runner-kind)
+      if [[ $# -lt 2 ]]; then
+        echo "[run_trace_job] ERROR: --runner-kind requires a value" >&2
+        exit 1
+      fi
+      RUNNER_KIND="$2"
+      shift 2
+      ;;
+    --runner-bin)
+      if [[ $# -lt 2 ]]; then
+        echo "[run_trace_job] ERROR: --runner-bin requires a value" >&2
+        exit 1
+      fi
+      RUNNER_BIN="$2"
+      shift 2
+      ;;
+    *)
+      runner_args+=("$1")
+      shift
+      ;;
+  esac
+done
+
+if [[ -z "${RUNNER_BIN}" ]]; then
+  case "${RUNNER_KIND}" in
+    cutlass)
+      RUNNER_BIN="${DEFAULT_CUTLASS_RUNNER}"
+      ;;
+    cublaslt)
+      RUNNER_BIN="${DEFAULT_CUBLASLT_RUNNER}"
+      ;;
+    *)
+      echo "[run_trace_job] ERROR: unsupported runner kind '${RUNNER_KIND}' (use cutlass or cublaslt)" >&2
+      exit 1
+      ;;
+  esac
+fi
 
 if [[ ! -f "${TRACER_TOOL_SO}" ]]; then
   echo "[run_trace_job] ERROR: tracer tool not found at ${TRACER_TOOL_SO}. Run modal/scripts/build_tracer.sh first." >&2
@@ -16,7 +60,11 @@ if [[ ! -x "${POST_PROCESSOR}" ]]; then
   exit 1
 fi
 if [[ ! -x "${RUNNER_BIN}" ]]; then
-  echo "[run_trace_job] ERROR: cutlass runner not found at ${RUNNER_BIN}. Run modal/scripts/build_cutlass_runner.sh first." >&2
+  if [[ "${RUNNER_KIND}" == "cublaslt" ]]; then
+    echo "[run_trace_job] ERROR: cublaslt runner not found at ${RUNNER_BIN}. Run modal/scripts/build_cublaslt_runner.sh first." >&2
+  else
+    echo "[run_trace_job] ERROR: runner not found at ${RUNNER_BIN}. Run modal/scripts/build_cutlass_runner.sh first or pass --runner-kind cublaslt." >&2
+  fi
   exit 1
 fi
 
@@ -34,7 +82,7 @@ export TRACE_FILE_COMPRESS="${TRACE_FILE_COMPRESS:-0}"
 # NVBit preloads/injects the tracer through CUDA_INJECTION64_PATH.
 export CUDA_INJECTION64_PATH="${TRACER_TOOL_SO}"
 
-"${RUNNER_BIN}" "$@"
+"${RUNNER_BIN}" "${runner_args[@]}"
 "${POST_PROCESSOR}" "${TRACE_OUTPUT_DIR}"
 
 if [[ ! -f "${TRACE_OUTPUT_DIR}/kernelslist.g" ]]; then

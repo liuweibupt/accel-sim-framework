@@ -1,4 +1,4 @@
-"""Modal app for CUTLASS GEMM trace capture on A100."""
+"""Modal app for GEMM trace capture on A100."""
 from __future__ import annotations
 
 import os
@@ -17,6 +17,7 @@ _MODAL_ROOT = Path(__file__).resolve().parent
 _REPO_ROOT = _MODAL_ROOT.parent
 _FETCH_CUTLASS_SCRIPT = Path("/root/project/modal/scripts/fetch_cutlass.sh")
 _BUILD_RUNNER_SCRIPT = Path("/root/project/modal/scripts/build_cutlass_runner.sh")
+_BUILD_CUBLASLT_RUNNER_SCRIPT = Path("/root/project/modal/scripts/build_cublaslt_runner.sh")
 _BUILD_TRACER_SCRIPT = Path("/root/project/modal/scripts/build_tracer.sh")
 _RUN_TRACE_JOB_SCRIPT = Path("/root/project/modal/scripts/run_trace_job.sh")
 _DOWNLOAD_ARTIFACTS_SCRIPT = _MODAL_ROOT / "scripts" / "download_artifacts.py"
@@ -36,10 +37,12 @@ image = (
     )
     .add_local_dir(str(_MODAL_ROOT / "scripts"), remote_path="/root/project/modal/scripts", copy=True)
     .add_local_dir(str(_MODAL_ROOT / "cutlass_runner"), remote_path="/root/project/modal/cutlass_runner", copy=True)
+    .add_local_dir(str(_MODAL_ROOT / "cublaslt_runner"), remote_path="/root/project/modal/cublaslt_runner", copy=True)
     .add_local_dir(str(_REPO_ROOT / "util" / "tracer_nvbit"), remote_path="/root/project/util/tracer_nvbit", copy=True)
     .run_commands(
         "cd /root/project && bash modal/scripts/fetch_cutlass.sh",
         "cd /root/project && bash modal/scripts/build_cutlass_runner.sh",
+        "cd /root/project && bash modal/scripts/build_cublaslt_runner.sh",
         "cd /root/project && ARCH=sm_80 bash modal/scripts/build_tracer.sh",
     )
 )
@@ -47,10 +50,15 @@ image = (
 trace_volume = modal.Volume.from_name(_ARTIFACT_VOLUME_NAME, create_if_missing=True)
 
 
-def _validate_shape(m: int, n: int, k: int) -> None:
-    allowed = {(512, 512, 512), (512, 12288, 12288)}
+def _validate_shape(m: int, n: int, k: int, runner_kind: str) -> None:
+    if runner_kind == "cutlass":
+        allowed = {(512, 512, 512), (512, 12288, 12288)}
+    elif runner_kind == "cublaslt":
+        allowed = {(2048, 12288, 12288)}
+    else:
+        raise ValueError("runner_kind must be cutlass or cublaslt")
     if (m, n, k) not in allowed:
-        raise ValueError(f"unsupported shape {(m, n, k)}; allowed shapes: {sorted(allowed)}")
+        raise ValueError(f"unsupported shape {(m, n, k)} for runner_kind={runner_kind}; allowed shapes: {sorted(allowed)}")
 
 
 def _default_job_name(dtype: str, m: int, n: int, k: int) -> str:
@@ -86,8 +94,16 @@ def validate_environment() -> dict[str, object]:
     ephemeral_disk=524288,
     volumes={"/artifacts": trace_volume},
 )
-def run_trace(dtype: str = "fp16", m: int = 512, n: int = 512, k: int = 512, job_name: str = "") -> dict[str, object]:
-    _validate_shape(m, n, k)
+def run_trace(
+    dtype: str = "fp16",
+    m: int = 512,
+    n: int = 512,
+    k: int = 512,
+    job_name: str = "",
+    runner_kind: str = "cutlass",
+    runner_bin: str = "",
+) -> dict[str, object]:
+    _validate_shape(m, n, k, runner_kind=runner_kind)
     if dtype not in {"fp16", "bf16"}:
         raise ValueError("dtype must be fp16 or bf16")
     if not job_name:
@@ -101,6 +117,8 @@ def run_trace(dtype: str = "fp16", m: int = 512, n: int = 512, k: int = 512, job
 
     cmd = [
         str(_RUN_TRACE_JOB_SCRIPT),
+        "--runner-kind",
+        runner_kind,
         "--dtype",
         dtype,
         "--m",
@@ -110,6 +128,8 @@ def run_trace(dtype: str = "fp16", m: int = 512, n: int = 512, k: int = 512, job
         "--k",
         str(k),
     ]
+    if runner_bin:
+        cmd.extend(["--runner-bin", runner_bin])
     subprocess.run(cmd, cwd="/root/project", env=env, check=True)
     trace_volume.commit()
 
@@ -122,6 +142,8 @@ def run_trace(dtype: str = "fp16", m: int = 512, n: int = 512, k: int = 512, job
         "job_name": job_name,
         "dtype": dtype,
         "shape": [m, n, k],
+        "runner_kind": runner_kind,
+        "runner_bin": runner_bin or "(default)",
         "gpu": "A100-80GB",
         "artifact_volume": _ARTIFACT_VOLUME_NAME,
         "remote_artifact_root": str(trace_root),
@@ -131,8 +153,25 @@ def run_trace(dtype: str = "fp16", m: int = 512, n: int = 512, k: int = 512, job
 
 
 @app.local_entrypoint()
-def main(dtype: str = "fp16", m: int = 512, n: int = 512, k: int = 512, job_name: str = "", skip_download: bool = False):
-    result = run_trace.remote(dtype=dtype, m=m, n=n, k=k, job_name=job_name)
+def main(
+    dtype: str = "fp16",
+    m: int = 512,
+    n: int = 512,
+    k: int = 512,
+    job_name: str = "",
+    runner_kind: str = "cutlass",
+    runner_bin: str = "",
+    skip_download: bool = False,
+):
+    result = run_trace.remote(
+        dtype=dtype,
+        m=m,
+        n=n,
+        k=k,
+        job_name=job_name,
+        runner_kind=runner_kind,
+        runner_bin=runner_bin,
+    )
     print(result)
 
     if skip_download:
