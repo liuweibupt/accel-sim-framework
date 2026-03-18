@@ -54,3 +54,9 @@ The following end-to-end runs have been completed and replayed locally with Acce
   - replay log: `modal/artifacts/bf16-512x512x512/sim_run/sim.out`
 
 See `modal/results/summary.md` for the replay metrics and current limitations.
+
+## A100-LPDDR5X config variant
+
+An `A100_LPDDR5X` config variant is available in this worktree. It keeps the `SM80_A100` compute side fixed and changes the memory-side bandwidth model to roughly 819.2 GB/s.
+
+Replayed 512x512x512 traces show negligible timing change versus the baseline A100 config, indicating the current CUTLASS kernel is not strongly off-chip-bandwidth-bound at this size.
