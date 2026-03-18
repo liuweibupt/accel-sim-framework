@@ -1,0 +1,5 @@
+case_id,dtype,accumulate,shape,config,modeled_bandwidth_gbps,cycles,sim_instructions,ipc,time_us_at_1410mhz,tensor_core_evidence,trace_path,replay_log,status
+fp16_512_a100,fp16,fp32,512x512x512,SM80_A100,1935.36,35980,6150144,170.9323,25.518,HMMA x65536,modal/artifacts/fp16-512x512x512/traces/,modal/artifacts/fp16-512x512x512/sim_run/sim.out,verified
+bf16_512_a100,bf16,fp32,512x512x512,SM80_A100,1935.36,35895,6150144,171.3371,25.457,HMMA x65536,modal/artifacts/bf16-512x512x512/traces/,modal/artifacts/bf16-512x512x512/sim_run/sim.out,verified
+fp16_512_a100_lpddr5x,fp16,fp32,512x512x512,SM80_A100_LPDDR5X,819.2,35936,6150144,171.1416,25.487,replay of HMMA trace under LPDDR5X config,modal/artifacts/fp16-512x512x512/traces/,modal/artifacts/fp16-512x512x512/sim_run_lpddr5x/sim.out,verified
+bf16_512_a100_lpddr5x,bf16,fp32,512x512x512,SM80_A100_LPDDR5X,819.2,36265,6150144,169.5890,25.720,replay of HMMA trace under LPDDR5X config,modal/artifacts/bf16-512x512x512/traces/,modal/artifacts/bf16-512x512x512/sim_run_lpddr5x/sim.out,verified

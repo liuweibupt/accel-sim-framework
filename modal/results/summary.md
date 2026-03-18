@@ -1,26 +1,23 @@
 # Modal A100 CUTLASS Trace Run Summary
 
 ## Scope
-This summary captures the first successful end-to-end runs of the Modal-based A100 trace workflow using CUTLASS GEMM kernels and local Accel-Sim replay with the repository's `SM80_A100` configuration.
+This summary captures the verified end-to-end Modal A100 trace workflow runs for small tensor-core GEMMs, plus the current status of the larger GPT-3-style replay effort.
 
 ## A100 target selection
 - Modal GPU requested: `A100-80GB`
+- Observed Modal device: `NVIDIA A100 80GB PCIe, 81920 MiB`
 - Accel-Sim replay config:
   - `gpu-simulator/gpgpu-sim/configs/tested-cfgs/SM80_A100/gpgpusim.config`
   - `gpu-simulator/configs/tested-cfgs/SM80_A100/trace.config`
 
-The repository does not explicitly label its A100 config as 40GB or 80GB, but this workflow intentionally used Modal's `A100-80GB` to align with the earlier config-based inference.
+The repository does not explicitly label its A100 config as 40GB or 80GB, but this workflow intentionally used Modal's `A100-80GB` and confirmed the runtime device as A100 80GB PCIe.
 
-## Successful runs
+## Verified small-kernel runs
 
 ### 1. FP16 input, FP32 accumulate, 512x512x512
 - Modal job name: `fp16-512x512x512`
 - Trace directory: `modal/artifacts/fp16-512x512x512/traces/`
 - Replay log: `modal/artifacts/fp16-512x512x512/sim_run/sim.out`
-- Trace files include:
-  - `kernelslist.g`
-  - `kernel-1-ctx_0x56201b8d3c00.trace`
-  - `kernel-1-ctx_0x56201b8d3c00.traceg`
 - Replay evidence:
   - `binary version = 80`
   - `gpu_tot_sim_cycle = 35980`
@@ -32,9 +29,6 @@ The repository does not explicitly label its A100 config as 40GB or 80GB, but th
 - Modal job name: `bf16-512x512x512`
 - Trace directory: `modal/artifacts/bf16-512x512x512/traces/`
 - Replay log: `modal/artifacts/bf16-512x512x512/sim_run/sim.out`
-- Trace files include:
-  - `kernelslist.g`
-  - `kernel-1-ctx_0x56431e79dc80.traceg`
 - Replay evidence:
   - `binary version = 80`
   - `gpu_tot_sim_cycle = 35895`
@@ -42,11 +36,21 @@ The repository does not explicitly label its A100 config as 40GB or 80GB, but th
   - `gpu_tot_ipc = 171.3371`
   - `GPGPU-Sim: *** exit detected ***`
 
-## Notes
-- Both runs exercised real Modal A100 hardware and produced Accel-Sim-compatible traces.
-- The small `512x512x512` kernels were chosen first to keep cost and turnaround low.
-- Initial attempts to expand directly to GPT-3-style `Mx12288x12288` shapes were not finalized in this round; the current preserved, verified outputs are the two successful 512-cube runs above.
-- The remote CUTLASS runner printed unstable checksums (`nan`/`inf`) in some cases, but trace generation and Accel-Sim replay completed successfully. Functional/numerical validation of the CUTLASS runner remains a separate follow-up concern from trace pipeline validation.
+## Tensor Core evidence
+The two verified `512x512x512` traces both exercised tensor-core MMA instructions:
+- FP16 trace: `65536 HMMA`
+- BF16 trace: `65536 HMMA`
+
+## Saved small GEMM results table
+
+| dtype | accumulate | shape | config | modeled BW (GB/s) | cycles | sim insn | IPC | time (us @ 1410 MHz) | tensor-core evidence | trace | replay log |
+|---|---|---|---|---:|---:|---:|---:|---:|---|---|---|
+| FP16 | FP32 | 512x512x512 | SM80_A100 | 1935.36 | 35980 | 6150144 | 170.9323 | 25.518 | HMMA x65536 | `modal/artifacts/fp16-512x512x512/traces/` | `modal/artifacts/fp16-512x512x512/sim_run/sim.out` |
+| BF16 | FP32 | 512x512x512 | SM80_A100 | 1935.36 | 35895 | 6150144 | 171.3371 | 25.457 | HMMA x65536 | `modal/artifacts/bf16-512x512x512/traces/` | `modal/artifacts/bf16-512x512x512/sim_run/sim.out` |
+| FP16 | FP32 | 512x512x512 | SM80_A100_LPDDR5X | 819.2 | 35936 | 6150144 | 171.1416 | 25.487 | same kernel / same trace replayed under LPDDR5X config | `modal/artifacts/fp16-512x512x512/traces/` | `modal/artifacts/fp16-512x512x512/sim_run_lpddr5x/sim.out` |
+| BF16 | FP32 | 512x512x512 | SM80_A100_LPDDR5X | 819.2 | 36265 | 6150144 | 169.5890 | 25.720 | same kernel / same trace replayed under LPDDR5X config | `modal/artifacts/bf16-512x512x512/traces/` | `modal/artifacts/bf16-512x512x512/sim_run_lpddr5x/sim.out` |
+
+A machine-readable export of the same table is saved at `modal/results/small_gemm_results.csv`.
 
 ## A100-LPDDR5X experiment
 
@@ -67,3 +71,35 @@ This corresponds to a 12-channel, 768-bit LPDDR5X-style bandwidth model.
 
 ### Interpretation
 For this CUTLASS tensor-core GEMM at `512x512x512`, reducing modeled peak DRAM bandwidth from ~1935 GB/s to ~819.2 GB/s caused only negligible timing change in Accel-Sim. That strongly suggests this kernel is compute-dominated / tensor-core-dominated at this problem size rather than bandwidth-limited by off-chip memory.
+
+## Large GPT-3-style GEMM trace/replay status
+
+### Captured large trace
+A larger FP16 GEMM was captured on Modal A100-80GB using cuBLASLt/CUTLASS-generated SM80 tensor-core code:
+- Shape: `2048x12288x12288`
+- Kernel observed in trace:
+  - `_ZN7cutlass7Kernel2I57cutlass_80_tensorop_s16816gemm_f16_128x256_32x3_nn_align8EEvNT_6ParamsE`
+- Kernel header:
+  - `grid dim = (64,12,2)`
+  - `block dim = (256,1,1)`
+  - `nregs = 220`
+  - `shmem = 73728`
+  - `binary version = 80`
+- Processed trace inputs:
+  - `modal/artifacts/fp16-2048x12288x12288-gemm3/raw_traces/kernelslist.g`
+  - `modal/artifacts/fp16-2048x12288x12288-gemm3/raw_traces/kernel-3-ctx_0x55962a553360.traceg`
+
+### Current replay status as of 2026-03-18 UTC
+- Replay is still **in progress / being actively monitored**.
+- Current live replay log:
+  - `modal/artifacts/fp16-2048x12288x12288-gemm3/sim_run_live.out`
+- Latest observed state:
+  - kernel launch succeeded
+  - `CTA/core = 1, limited by: regs`
+  - CTA assignment has progressed through many shader bindings / thread blocks
+- Final metrics such as `gpu_tot_sim_cycle` are not yet available at the time of this update.
+
+## Notes
+- The small `512x512x512` kernels were chosen first to keep Modal cost and turnaround low.
+- The large trace artifacts are intentionally kept out of git because of their size.
+- The small runs are the currently verified completed replays; the large run remains an active long-running replay task.
