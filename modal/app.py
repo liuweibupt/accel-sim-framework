@@ -90,7 +90,7 @@ def validate_environment() -> dict[str, object]:
     gpu="A100-80GB",
     cpu=8,
     memory=32768,
-    timeout=60 * 20,
+    timeout=60 * 60 * 4,
     ephemeral_disk=524288,
     volumes={"/artifacts": trace_volume},
 )
@@ -102,6 +102,7 @@ def run_trace(
     job_name: str = "",
     runner_kind: str = "cutlass",
     runner_bin: str = "",
+    dynamic_kernel_range: str = "",
 ) -> dict[str, object]:
     _validate_shape(m, n, k, runner_kind=runner_kind)
     if dtype not in {"fp16", "bf16"}:
@@ -114,6 +115,8 @@ def run_trace(
     env["TRACES_FOLDER"] = str(trace_root)
     env.setdefault("TOOL_COMPRESS", "0")
     env.setdefault("TRACE_FILE_COMPRESS", "0")
+    if dynamic_kernel_range:
+        env["DYNAMIC_KERNEL_RANGE"] = dynamic_kernel_range
 
     cmd = [
         str(_RUN_TRACE_JOB_SCRIPT),
@@ -144,6 +147,7 @@ def run_trace(
         "shape": [m, n, k],
         "runner_kind": runner_kind,
         "runner_bin": runner_bin or "(default)",
+        "dynamic_kernel_range": dynamic_kernel_range or "(all kernels)",
         "gpu": "A100-80GB",
         "artifact_volume": _ARTIFACT_VOLUME_NAME,
         "remote_artifact_root": str(trace_root),
@@ -161,6 +165,7 @@ def main(
     job_name: str = "",
     runner_kind: str = "cutlass",
     runner_bin: str = "",
+    dynamic_kernel_range: str = "",
     skip_download: bool = False,
 ):
     result = run_trace.remote(
@@ -171,6 +176,7 @@ def main(
         job_name=job_name,
         runner_kind=runner_kind,
         runner_bin=runner_bin,
+        dynamic_kernel_range=dynamic_kernel_range,
     )
     print(result)
 
