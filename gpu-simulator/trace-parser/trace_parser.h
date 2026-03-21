@@ -6,6 +6,8 @@
 #include <stdlib.h>
 #include <string>
 #include <vector>
+
+#include "../trace-driven/barrier_id_map.h"
 #ifndef TRACE_PARSER_H
 #define TRACE_PARSER_H
 
@@ -130,6 +132,7 @@ struct kernel_trace_t {
   unsigned long long shmem_base_addr;
   unsigned long long local_base_addr;
   PipeReader pipeReader;
+  mutable trace_barrier_id_map barrier_id_map;
 };
 
 class trace_parser {
