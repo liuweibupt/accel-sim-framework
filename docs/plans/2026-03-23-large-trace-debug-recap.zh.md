@@ -13,6 +13,37 @@
 
 ---
 
+## 最新结论（2026-03-27）
+
+这份大 trace 现在已经可以在 `SM80_A100` 配置下成功 replay 结束，不再停在之前稳定复现的 deadlock 点。
+
+成功产物目录：
+
+- `modal/artifacts/fp16-2048x12288x12288-gemm3-retrace3/reprocessed_sim_bar0_20260327-010117_pty`
+
+成功 replay 的关键统计：
+
+- `gpu_tot_sim_cycle = 4848187`
+- `gpu_tot_sim_insn = 10244247315`
+- `gpu_tot_ipc = 2113.0059`
+- `gpgpu_simulation_time = 0 days, 2 hrs, 29 min, 13 sec (8953 sec)`
+- 日志结束标记：`GPGPU-Sim: *** exit detected ***`
+
+这说明当前这条大 GEMM replay 链路已经跑通。
+
+同时，这也把当前主根因判断进一步收敛为：
+
+> trace-driven replay 对 `BAR.SYNC.DEFER_BLOCKING` 的 barrier 语义建模不正确，导致同一个 CTA 内的 warp 被错误拆分到不同 barrier phase 上，最终互相等待。
+
+当前实验性但有效的修复方式是：
+
+- 对 `BAR.SYNC.DEFER_BLOCKING` 统一映射到默认 CTA barrier 0
+- 其它 `OP_BAR` 形式仍保留按 kernel 内 barrier PC 分配 id 的逻辑
+
+也就是说，之前怀疑的 zero-mask `LDG.E` / `LDGSTS` / scheduler forward progress 问题，至少对这份已经重新处理好的大 trace 而言，不再是主阻塞项。
+
+---
+
 ## 已经解决的问题
 
 ### 1. 最早的大 trace 本身不完整
@@ -69,6 +100,29 @@ bar_id = 0;
 - 已做回归测试
 - 已提交并 push
 
+### 5.1 `BAR.SYNC.DEFER_BLOCKING` 不能简单按 barrier PC 拆 phase
+继续调试大 trace 后发现，上一条“按 barrier PC 精确分配 id”的修复还不够。
+
+原因是：
+
+- 大型 CUTLASS GEMM 中会反复出现多个 `BAR.SYNC.DEFER_BLOCKING` PC
+- 它们在 trace 中并没有暴露出可直接区分的显式 barrier operand
+- 如果直接按 PC 给它们不同 id，会把同一个 CTA 的 warp 错误拆到不同 barrier phase
+
+在 deadlock dump 中，可以明确看到 warp 被分裂卡在：
+
+- `bar_id=2, bar_pc=0x1df0`
+- `bar_id=3, bar_pc=0x2270`
+
+而这两个位置对应的都是 `BAR.SYNC.DEFER_BLOCKING`。
+
+因此当前收敛出的更合理语义是：
+
+- `BAR.SYNC.DEFER_BLOCKING` → 统一映射到默认 barrier 0
+- 其它 `OP_BAR` → 仍使用 per-kernel PC map
+
+这也是最终把大 replay 跑通的关键修复。
+
 ### 6. empty warp trace 生命周期 bug
 之前 replay 曾经失败在：
 
@@ -117,7 +171,7 @@ trace_driven.cc:82: assert(warp_traces.size() > 0)
 
 ---
 
-## 当前大 trace 的现象
+## 之前大 trace 的现象（现已被修复）
 
 现在的大 replay 不再是“一启动就坏”，而是已经能稳定跑到较深阶段，然后复现出一个稳定的后期 deadlock。
 
@@ -129,11 +183,11 @@ last writeback core 35 @ gpu_sim_cycle 7689340
 (+ gpu_tot_sim_cycle 4287217296) (60660 cycles ago)
 ```
 
-这个 deadlock 点目前已经稳定复现。
+这个 deadlock 点在旧语义下可以稳定复现，但在当前 `BAR.SYNC.DEFER_BLOCKING -> barrier 0` 的修复语义下，已经不再出现。
 
 ---
 
-## 当前 deadlock 的关键观察
+## 之前 deadlock 的关键观察
 
 ### 1. CTA 0 的 barrier 清理不是最终根因
 在 deadlock 日志末尾可以看到：
@@ -234,41 +288,33 @@ last writeback core 35 @ gpu_sim_cycle 7689340
 
 ## 当前最合理的判断
 
-整个 replay 链路已经走过了之前那些更早期的错误阶段：
+整个 replay 链路最终走过了之前那些更早期的错误阶段：
 
 - trace 结构损坏
 - barrier identity collapse
 - empty warp 生命周期错误
 - ABI / relink 崩溃
 
-现在剩下的 bug 更像是：
+最终事实表明，之前的死锁更接近于：
 
-> 一些 warp 在逻辑上仍然活着，ibuffer 中也还能看到指令，但它们不再继续 issue 或 commit，最终引发全局 deadlock。
+> `BAR.SYNC.DEFER_BLOCKING` 的 trace replay 语义错误，导致 warp barrier phase 被错误拆分。
 
-也就是说，它更像：
+而不是：
 
-- warp / scheduler 的 forward-progress failure
-- 或 trace-driven 指令状态处理异常
-
-而不像：
-
-- 一个简单的“CTA 最终 barrier 没有释放”的 bug
+- 单纯的 zero-mask `LDG.E` 问题
+- 单纯的 `LDGSTS` completion 问题
+- 单纯的 scheduler forward-progress 问题
 
 ---
 
-## 当前排查方向
+## 当前结论与后续方向
 
-当前下一步重点是判断 deadlocked active warp 到底卡在哪一类条件上：
+对这份大 trace 而言，当前已经拿到成功 replay，因此下一步重点不再是“先把它跑通”，而是：
 
-1. zero-mask `LDG.E` 的处理
-2. `LDGSTS / DEPBAR` 相关等待状态
-3. scheduler 对 warp issue eligibility 的可见性
-4. 其它 trace-driven 前端生命周期问题
-
-到目前为止，最强的具体线索仍然是：
-
-- deadlocked active warp 停在 `0x1e00 / 0x2280`
-- 尤其是 **zero-mask `LDG.E`**
+1. 把当前有效修复整理为更干净的正式补丁
+2. 判断这种 `DEFER_BLOCKING -> barrier 0` 的处理是否还能泛化到更多 SM80 trace
+3. 用更多 CUTLASS / transformer GEMM trace 做回归
+4. 再决定是否保留当前 nested `gpgpu-sim` 中的调试 instrumentation
 
 ---
 

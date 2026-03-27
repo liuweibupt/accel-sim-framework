@@ -360,12 +360,14 @@ bool trace_warp_inst_t::parse_from_trace_struct(
 
       break;
     case OP_BAR:
-      // Preserve barrier phase identity in trace-driven replay. Large SM80
-      // kernels can reuse many distinct BAR PCs across software-pipeline
-      // phases; hashing with % MAX_BARRIERS_PER_CTA can still alias them.
-      // Assign a unique barrier id per barrier PC within this kernel instead.
-      bar_id = kernel_trace_info->barrier_id_map.get_or_assign(
-          trace.m_pc, MAX_BARRIERS_PER_CTA);
+      // Current large-GEMM evidence shows warps deadlocking while split across
+      // multiple BAR.SYNC.DEFER_BLOCKING PCs (e.g. 0x1df0 vs 0x2270). For
+      // that opcode form, the trace does not expose an explicit barrier
+      // operand, so we conservatively map it to the default CTA barrier 0.
+      // Other OP_BAR forms still use the per-kernel PC mapper.
+      bar_id = trace_bar_id_for_op_bar(trace.opcode, trace.m_pc,
+                                       MAX_BARRIERS_PER_CTA,
+                                       &kernel_trace_info->barrier_id_map);
       bar_count = (unsigned)-1;
       bar_type = SYNC;
       // TO DO

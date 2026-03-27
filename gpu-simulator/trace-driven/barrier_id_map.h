@@ -1,6 +1,7 @@
 #ifndef ACCELSIM_TRACE_BARRIER_ID_MAP_H
 #define ACCELSIM_TRACE_BARRIER_ID_MAP_H
 
+#include <string>
 #include <stdexcept>
 #include <unordered_map>
 
@@ -26,5 +27,19 @@ class trace_barrier_id_map {
  private:
   std::unordered_map<unsigned, unsigned> m_pc_to_id;
 };
+
+inline unsigned trace_bar_id_for_op_bar(const std::string &opcode,
+                                        unsigned pc, unsigned max_slots,
+                                        trace_barrier_id_map *map) {
+  if (opcode == "BAR.SYNC.DEFER_BLOCKING") {
+    return 0;
+  }
+
+  if (map == NULL) {
+    throw std::runtime_error("trace_bar_id_for_op_bar requires map");
+  }
+
+  return map->get_or_assign(pc, max_slots);
+}
 
 #endif
