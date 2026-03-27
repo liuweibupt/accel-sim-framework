@@ -1313,6 +1313,10 @@ void gpgpu_sim::deadlock_check() {
       printf("GPGPU-Sim uArch DEADLOCK:  iterconnect contains traffic\n");
       icnt_display_state(stdout);
     }
+    printf("\nGPGPU-Sim uArch DEADLOCK: dumping selected shader pipelines\n");
+    dump_pipeline((0x40 | 0x4 | 0x1), gpu_sim_insn_last_update_sid, 0);
+    dump_pipeline((0x40 | 0x4 | 0x1), 0, 0);
+    dump_pipeline((0x40 | 0x4 | 0x1), 2, 0);
     printf(
         "\nRe-run the simulator in gdb and use debug routines in .gdbinit to "
         "debug this\n");

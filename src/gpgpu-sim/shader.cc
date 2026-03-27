@@ -1056,11 +1056,11 @@ void shader_core_ctx::issue_warp(register_set &pipe_reg_set,
   unsigned int ldgdepbar_id = m_warp[warp_id]->m_ldgdepbar_id;
   if (next_inst->m_is_ldgsts) {
     if (m_warp[warp_id]->m_ldgdepbar_buf.size() == ldgdepbar_id + 1) {
-      m_warp[warp_id]->m_ldgdepbar_buf[ldgdepbar_id].push_back(*next_inst);
+      m_warp[warp_id]->m_ldgdepbar_buf[ldgdepbar_id].push_back(**pipe_reg);
     } else {
       assert(m_warp[warp_id]->m_ldgdepbar_buf.size() < ldgdepbar_id + 1);
       std::vector<warp_inst_t> l;
-      l.push_back(*next_inst);
+      l.push_back(**pipe_reg);
       m_warp[warp_id]->m_ldgdepbar_buf.push_back(l);
     }
     // If the mask of the instruction is all 0, then the address is also 0,
@@ -1874,14 +1874,10 @@ void shader_core_ctx::unset_depbar(const warp_inst_t &inst) {
     for (int i = 0; i < m_warp[inst.warp_id()]->m_ldgdepbar_buf.size(); i++) {
       for (int j = 0; j < m_warp[inst.warp_id()]->m_ldgdepbar_buf[i].size();
            j++) {
-        if (m_warp[inst.warp_id()]->m_ldgdepbar_buf[i][j].pc == inst.pc) {
-          // Handle the case that same pc results in multiple LDGSTS
-          // instructions
-          if (m_warp[inst.warp_id()]->m_ldgdepbar_buf[i][j].get_addr(0) ==
-              inst.get_addr(0)) {
-            m_warp[inst.warp_id()]->m_ldgdepbar_buf[i][j].pc = -1;
-            goto DoneWB;
-          }
+        if (m_warp[inst.warp_id()]->m_ldgdepbar_buf[i][j].get_uid() ==
+            inst.get_uid()) {
+          m_warp[inst.warp_id()]->m_ldgdepbar_buf[i][j].pc = -1;
+          goto DoneWB;
         }
       }
     }
@@ -2019,8 +2015,8 @@ mem_stage_stall_type ldst_unit::process_cache_access(
 
       // release LDGSTS
       if (inst.m_is_ldgsts) {
-        m_pending_ldgsts[inst.warp_id()][inst.pc][inst.get_addr(0)]--;
-        if (m_pending_ldgsts[inst.warp_id()][inst.pc][inst.get_addr(0)] == 0) {
+        m_pending_ldgsts[inst.warp_id()][inst.get_uid()]--;
+        if (m_pending_ldgsts[inst.warp_id()][inst.get_uid()] == 0) {
           m_core->unset_depbar(inst);
         }
       }
@@ -2156,11 +2152,9 @@ void ldst_unit::L1_latency_queue_cycle() {
           // release LDGSTS
           if (mf_next->get_inst().m_is_ldgsts) {
             m_pending_ldgsts[mf_next->get_inst().warp_id()]
-                            [mf_next->get_inst().pc]
-                            [mf_next->get_inst().get_addr(0)]--;
+                            [mf_next->get_inst().get_uid()]--;
             if (m_pending_ldgsts[mf_next->get_inst().warp_id()]
-                                [mf_next->get_inst().pc]
-                                [mf_next->get_inst().get_addr(0)] == 0) {
+                                [mf_next->get_inst().get_uid()] == 0) {
               m_core->unset_depbar(mf_next->get_inst());
             }
           }
@@ -2687,7 +2681,7 @@ void ldst_unit::issue(register_set &reg_set) {
       }
     }
     if (inst->m_is_ldgsts) {
-      m_pending_ldgsts[warp_id][inst->pc][inst->get_addr(0)] += n_accesses;
+      m_pending_ldgsts[warp_id][inst->get_uid()] += n_accesses;
     }
   }
 
@@ -2722,10 +2716,9 @@ void ldst_unit::writeback() {
           }
         } else if (m_next_wb.m_is_ldgsts) {  // for LDGSTS instructions where no
                                              // output register is used
-          m_pending_ldgsts[m_next_wb.warp_id()][m_next_wb.pc]
-                          [m_next_wb.get_addr(0)]--;
-          if (m_pending_ldgsts[m_next_wb.warp_id()][m_next_wb.pc]
-                              [m_next_wb.get_addr(0)] == 0) {
+          m_pending_ldgsts[m_next_wb.warp_id()][m_next_wb.get_uid()]--;
+          if (m_pending_ldgsts[m_next_wb.warp_id()][m_next_wb.get_uid()] ==
+              0) {
             insn_completed = true;
           }
           break;
@@ -2965,9 +2958,8 @@ void ldst_unit::cycle() {
 
           // release LDGSTS
           if (m_dispatch_reg->m_is_ldgsts) {
-            // m_pending_ldgsts[m_dispatch_reg->warp_id()][m_dispatch_reg->pc][m_dispatch_reg->get_addr(0)]--;
-            if (m_pending_ldgsts[m_dispatch_reg->warp_id()][m_dispatch_reg->pc]
-                                [m_dispatch_reg->get_addr(0)] == 0) {
+            if (m_pending_ldgsts[m_dispatch_reg->warp_id()]
+                                [m_dispatch_reg->get_uid()] == 0) {
               m_core->unset_depbar(*m_dispatch_reg);
             }
           }
@@ -3807,6 +3799,45 @@ barrier_set_t::barrier_set_t(shader_core_ctx *shader,
   }
 }
 
+static void debug_dump_barrier_state(
+    const char *tag, unsigned cta_id, int warp_id, int bar_id, int bar_count,
+    const barrier_set_t::cta_to_warp_t &cta_to_warps,
+    const barrier_set_t::bar_id_to_warp_t &bar_id_to_warps,
+    const warp_set_t &warp_active, const warp_set_t &warp_at_barrier) {
+  barrier_set_t::cta_to_warp_t::const_iterator cta_it =
+      cta_to_warps.find(cta_id);
+  if (cta_it == cta_to_warps.end()) {
+    fprintf(stderr,
+            "[BARRIER_DEBUG] tag=%s cta=%u warp=%d bar=%d count=%d "
+            "cta_present=0\n",
+            tag, cta_id, warp_id, bar_id, bar_count);
+    fflush(stderr);
+    return;
+  }
+
+  warp_set_t warps_in_cta = cta_it->second;
+  warp_set_t active_in_cta = warps_in_cta & warp_active;
+  warp_set_t at_barrier_in_cta = warps_in_cta & warp_at_barrier;
+
+  fprintf(stderr,
+          "[BARRIER_DEBUG] tag=%s cta=%u warp=%d bar=%d count=%d "
+          "warps=%s active=%s at_barrier=%s\n",
+          tag, cta_id, warp_id, bar_id, bar_count,
+          warps_in_cta.to_string().c_str(), active_in_cta.to_string().c_str(),
+          at_barrier_in_cta.to_string().c_str());
+
+  for (barrier_set_t::bar_id_to_warp_t::const_iterator it =
+           bar_id_to_warps.begin();
+       it != bar_id_to_warps.end(); ++it) {
+    warp_set_t at_specific_barrier = warps_in_cta & it->second;
+    if (at_specific_barrier.any()) {
+      fprintf(stderr, "[BARRIER_DEBUG] tag=%s cta=%u bar_slot=%u waiting=%s\n",
+              tag, cta_id, it->first, at_specific_barrier.to_string().c_str());
+    }
+  }
+  fflush(stderr);
+}
+
 // during cta allocation
 void barrier_set_t::allocate_barrier(unsigned cta_id, warp_set_t warps) {
   assert(cta_id < m_max_cta_per_core);
@@ -3830,6 +3861,9 @@ void barrier_set_t::deallocate_barrier(unsigned cta_id) {
   if (w == m_cta_to_warps.end()) return;
   warp_set_t warps = w->second;
   warp_set_t at_barrier = warps & m_warp_at_barrier;
+  debug_dump_barrier_state("deallocate_pre", cta_id, -1, -1, -1,
+                           m_cta_to_warps, m_bar_id_to_warps, m_warp_active,
+                           m_warp_at_barrier);
   assert(at_barrier.any() == false);  // no warps stuck at barrier
   warp_set_t active = warps & m_warp_active;
   assert(active.any() == false);  // no warps in CTA still running
@@ -3863,6 +3897,10 @@ void barrier_set_t::warp_reaches_barrier(unsigned cta_id, unsigned warp_id,
   }
   assert(w->second.test(warp_id) == true);  // warp is in cta
 
+  debug_dump_barrier_state("reach_pre", cta_id, warp_id, bar_id, bar_count,
+                           m_cta_to_warps, m_bar_id_to_warps, m_warp_active,
+                           m_warp_at_barrier);
+
   m_bar_id_to_warps[bar_id].set(warp_id);
   if (bar_type == SYNC || bar_type == RED) {
     m_warp_at_barrier.set(warp_id);
@@ -3891,30 +3929,57 @@ void barrier_set_t::warp_reaches_barrier(unsigned cta_id, unsigned warp_id,
       }
     }
   }
+
+  debug_dump_barrier_state("reach_post", cta_id, warp_id, bar_id, bar_count,
+                           m_cta_to_warps, m_bar_id_to_warps, m_warp_active,
+                           m_warp_at_barrier);
 }
 
 // warp reaches exit
 void barrier_set_t::warp_exit(unsigned warp_id) {
+  unsigned cta_id = (unsigned)-1;
+  cta_to_warp_t::iterator w = m_cta_to_warps.begin();
+  for (; w != m_cta_to_warps.end(); ++w) {
+    if (w->second.test(warp_id) == true) break;
+  }
+  if (w != m_cta_to_warps.end()) {
+    cta_id = w->first;
+    debug_dump_barrier_state("warp_exit_pre", cta_id, warp_id, -1, -1,
+                             m_cta_to_warps, m_bar_id_to_warps, m_warp_active,
+                             m_warp_at_barrier);
+  }
+
   // caller needs to verify all threads in warp are done, e.g., by checking PDOM
   // stack to see it has only one entry during exit_impl()
   m_warp_active.reset(warp_id);
 
   // test for barrier release
-  cta_to_warp_t::iterator w = m_cta_to_warps.begin();
+  w = m_cta_to_warps.begin();
   for (; w != m_cta_to_warps.end(); ++w) {
     if (w->second.test(warp_id) == true) break;
+  }
+  if (w == m_cta_to_warps.end()) {
+    fprintf(stderr,
+            "[BARRIER_DEBUG] tag=warp_exit_missing_cta warp=%u cta_present=0\n",
+            warp_id);
+    fflush(stderr);
+    return;
   }
   warp_set_t warps_in_cta = w->second;
   warp_set_t active = warps_in_cta & m_warp_active;
 
   for (unsigned i = 0; i < m_max_barriers_per_cta; i++) {
     warp_set_t at_a_specific_barrier = warps_in_cta & m_bar_id_to_warps[i];
-    if (at_a_specific_barrier == active) {
+    if (active.none() || at_a_specific_barrier == active) {
       // all warps have reached barrier, so release waiting warps...
       m_bar_id_to_warps[i] &= ~at_a_specific_barrier;
       m_warp_at_barrier &= ~at_a_specific_barrier;
     }
   }
+
+  debug_dump_barrier_state("warp_exit_post", w->first, warp_id, -1, -1,
+                           m_cta_to_warps, m_bar_id_to_warps, m_warp_active,
+                           m_warp_at_barrier);
 }
 
 // assertions
@@ -4135,6 +4200,14 @@ void shd_warp_t::print(FILE *fout) const {
     fprintf(fout, " active=%s", m_active_threads.to_string().c_str());
     fprintf(fout, " last fetched @ %5llu", m_last_fetch);
     if (m_imiss_pending) fprintf(fout, " i-miss pending");
+    if (m_shader->warp_waiting_at_barrier(m_warp_id))
+      fprintf(fout, " wait=barrier(bar_id=%u,bar_pc=0x%04llx)",
+              m_inst_at_barrier.bar_id, m_inst_at_barrier.pc);
+    if (m_shader->warp_waiting_at_mem_barrier(m_warp_id))
+      fprintf(fout, " wait=mem_barrier");
+    if (m_waiting_ldgsts) fprintf(fout, " wait=ldgsts");
+    if (m_n_atomic > 0) fprintf(fout, " wait=atomic(%u)", m_n_atomic);
+    if (functional_done()) fprintf(fout, " func_done");
     fprintf(fout, "\n");
   }
 }

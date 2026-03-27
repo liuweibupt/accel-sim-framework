@@ -39,7 +39,7 @@ class gpgpu_context;
 
 // Set a hard limit of 32 CTAs per shader [cuda only has 8]
 #define MAX_CTA_PER_SHADER 32
-#define MAX_BARRIERS_PER_CTA 16
+#define MAX_BARRIERS_PER_CTA 64
 
 // After expanding the vector input and output operands
 #define MAX_INPUT_VALUES 24

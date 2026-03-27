@@ -1355,12 +1355,12 @@ class ldst_unit : public pipelined_simd_unit {
   // Add a structure to record the LDGSTS instructions,
   // similar to m_pending_writes, but since LDGSTS does not have a output
   // register to write to, so a new structure needs to be added
-  /* A multi-level map: unsigned (warp_id) -> unsigned (pc) -> unsigned (addr)
-   * -> unsigned (count)
+  /* Track outstanding LDGSTS requests by issued instruction uid so replay can
+   * distinguish repeated dynamic instances that share the same pc and lane-0
+   * address shape.
    */
   std::map<unsigned /*warp_id*/,
-           std::map<unsigned /*pc*/,
-                    std::map<unsigned /*addr*/, unsigned /*count*/>>>
+           std::map<unsigned /*inst_uid*/, unsigned /*count*/>>
       m_pending_ldgsts;
   // modifiers
   virtual void issue(register_set &inst);
