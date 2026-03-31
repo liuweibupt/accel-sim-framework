@@ -1,7 +1,7 @@
 # Modal A100 CUTLASS Trace Run Summary
 
 ## Scope
-This summary captures the verified end-to-end Modal A100 trace workflow runs for small tensor-core GEMMs, plus the current status of the larger GPT-3-style replay effort.
+This summary captures the verified end-to-end Modal A100 trace workflow runs for small tensor-core GEMMs, plus the completed large GPT-3-style GEMM replay comparison between the baseline A100 memory system and the LPDDR5X-style memory variant.
 
 ## A100 target selection
 - Modal GPU requested: `A100-80GB`
@@ -72,7 +72,7 @@ This corresponds to a 12-channel, 768-bit LPDDR5X-style bandwidth model.
 ### Interpretation
 For this CUTLASS tensor-core GEMM at `512x512x512`, reducing modeled peak DRAM bandwidth from ~1935 GB/s to ~819.2 GB/s caused only negligible timing change in Accel-Sim. That strongly suggests this kernel is compute-dominated / tensor-core-dominated at this problem size rather than bandwidth-limited by off-chip memory.
 
-## Large GPT-3-style GEMM trace/replay status
+## Large GPT-3-style GEMM replay comparison
 
 ### Captured large trace
 A larger FP16 GEMM was captured on Modal A100-80GB using cuBLASLt/CUTLASS-generated SM80 tensor-core code:
@@ -89,23 +89,49 @@ A larger FP16 GEMM was captured on Modal A100-80GB using cuBLASLt/CUTLASS-genera
   - `modal/artifacts/fp16-2048x12288x12288-gemm3/raw_traces/kernelslist.g`
   - `modal/artifacts/fp16-2048x12288x12288-gemm3/raw_traces/kernel-3-ctx_0x55962a553360.traceg`
 
-### Current replay status as of 2026-03-18 UTC
-- Replay is still **in progress / being actively monitored**.
-- Current live replay log:
-  - `modal/artifacts/fp16-2048x12288x12288-gemm3/sim_run_live.out`
-- Latest observed state:
-  - kernel launch succeeded
-  - `CTA/core = 1, limited by: regs`
-  - CTA assignment has progressed through many shader bindings / thread blocks
-- Final metrics such as `gpu_tot_sim_cycle` are not yet available at the time of this update.
+### Final replay evidence
+
+#### Baseline `SM80_A100`
+- Replay log:
+  - `modal/artifacts/fp16-2048x12288x12288-gemm3-retrace3/reprocessed_sim_bar0_20260327-010117_pty/sim_live.out`
+- Verified final metrics:
+  - `gpu_tot_sim_cycle = 4848187`
+  - `gpu_tot_sim_insn = 10244247315`
+  - `gpu_tot_ipc = 2113.0059`
+  - `gpgpu_simulation_time = 0 days, 2 hrs, 29 min, 13 sec (8953 sec)`
+  - `GPGPU-Sim: *** exit detected ***`
+
+#### LPDDR5X-style `SM80_A100_LPDDR5X`
+- Replay log:
+  - `modal/artifacts/fp16-2048x12288x12288-gemm3-retrace3/reprocessed_sim_lpddr5x_quiet_fg_20260327-105500/sim_live.out`
+- Verified final metrics:
+  - `gpu_tot_sim_cycle = 14992260`
+  - `gpu_tot_sim_insn = 10244247315`
+  - `gpu_tot_ipc = 683.3024`
+  - `gpgpu_simulation_time = 0 days, 6 hrs, 25 min, 32 sec (23132 sec)`
+  - `GPGPU-Sim: *** exit detected ***`
+
+### Large GEMM baseline vs LPDDR5X replay comparison (1410 MHz core clock)
+
+| Case | Config | Modeled BW (GB/s) | Cycles | Sim insn | IPC | Time (us @ 1410 MHz) | Slowdown vs A100 | Perf drop vs A100 |
+|---|---|---:|---:|---:|---:|---:|---:|---:|
+| FP16 / FP32 acc / 2048x12288x12288 | SM80_A100 | 1935.36 | 4848187 | 10244247315 | 2113.0059 | 3438.430 | 1.000x | 0.00% |
+| FP16 / FP32 acc / 2048x12288x12288 | SM80_A100_LPDDR5X | 819.2 | 14992260 | 10244247315 | 683.3024 | 10632.809 | 3.092x | 67.66% |
+
+### Interpretation
+For this large CUTLASS tensor-core GEMM, replacing the A100 HBM-like memory system with the 12-channel LPDDR5X-style 819.2 GB/s configuration causes a substantial modeled slowdown:
+- slowdown factor: `3.092x`
+- relative performance drop: `67.66%`
+
+This large problem size is therefore much more sensitive to off-chip memory bandwidth than the previously verified `512x512x512` small GEMMs.
 
 ## Barrier root cause and repair update
 
 The large `2048x12288x12288` replay failure was traced to trace-driven `OP_BAR` decoding collapsing distinct `BAR.SYNC.DEFER_BLOCKING` phases into a single barrier id (`bar_id = 0`). Runtime barrier instrumentation on the failing kernel showed repeated barrier traffic all landing in the same simulator slot, which is consistent with the placeholder logic in `gpu-simulator/trace-driven/trace_driven.cc`.
 
-A minimal repair has now been implemented: trace-driven `OP_BAR` uses a stable PC-derived synthetic barrier id instead of always using `0`. Early validation shows the large replay now produces non-zero barrier ids (for example `bar=7` and `bar=10`) and no longer immediately reproduces the original teardown assertion during the short probe window. A fresh full replay is now running with the repaired binary.
+A minimal repair has now been implemented: `BAR.SYNC.DEFER_BLOCKING` is mapped to the default CTA barrier while other `OP_BAR` forms still use a stable per-kernel mapping. With that repair in place, the large replay now completes successfully for both the baseline A100 config and the LPDDR5X-style config.
 
 ## Notes
 - The small `512x512x512` kernels were chosen first to keep Modal cost and turnaround low.
 - The large trace artifacts are intentionally kept out of git because of their size.
-- The small runs are the currently verified completed replays; the large run remains an active long-running replay task.
+- The summary tables in this file are the currently verified completed replays.
