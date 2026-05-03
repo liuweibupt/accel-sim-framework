@@ -7,6 +7,7 @@ TRACER_TOOL_SO="${REPO_ROOT}/util/tracer_nvbit/tracer_tool/tracer_tool.so"
 POST_PROCESSOR="${REPO_ROOT}/util/tracer_nvbit/tracer_tool/traces-processing/post-traces-processing"
 DEFAULT_CUTLASS_RUNNER="${REPO_ROOT}/modal/cutlass_runner/build/cutlass_runner"
 DEFAULT_CUBLASLT_RUNNER="${REPO_ROOT}/modal/cublaslt_runner/build/cublaslt_runner"
+DEFAULT_AGENT_KV_RUNNER="${REPO_ROOT}/modal/agent_kv_runner/build/agent_kv_runner"
 RUNNER_KIND="${RUNNER_KIND:-cutlass}"
 RUNNER_BIN="${RUNNER_BIN:-}"
 
@@ -44,8 +45,11 @@ if [[ -z "${RUNNER_BIN}" ]]; then
     cublaslt)
       RUNNER_BIN="${DEFAULT_CUBLASLT_RUNNER}"
       ;;
+    agent_kv)
+      RUNNER_BIN="${DEFAULT_AGENT_KV_RUNNER}"
+      ;;
     *)
-      echo "[run_trace_job] ERROR: unsupported runner kind '${RUNNER_KIND}' (use cutlass or cublaslt)" >&2
+      echo "[run_trace_job] ERROR: unsupported runner kind '${RUNNER_KIND}' (use cutlass, cublaslt, or agent_kv)" >&2
       exit 1
       ;;
   esac
@@ -62,6 +66,8 @@ fi
 if [[ ! -x "${RUNNER_BIN}" ]]; then
   if [[ "${RUNNER_KIND}" == "cublaslt" ]]; then
     echo "[run_trace_job] ERROR: cublaslt runner not found at ${RUNNER_BIN}. Run modal/scripts/build_cublaslt_runner.sh first." >&2
+  elif [[ "${RUNNER_KIND}" == "agent_kv" ]]; then
+    echo "[run_trace_job] ERROR: agent_kv runner not found at ${RUNNER_BIN}. Run modal/scripts/build_agent_kv_runner.sh first." >&2
   else
     echo "[run_trace_job] ERROR: runner not found at ${RUNNER_BIN}. Run modal/scripts/build_cutlass_runner.sh first or pass --runner-kind cublaslt." >&2
   fi

@@ -18,6 +18,7 @@ _REPO_ROOT = _MODAL_ROOT.parent
 _FETCH_CUTLASS_SCRIPT = Path("/root/project/modal/scripts/fetch_cutlass.sh")
 _BUILD_RUNNER_SCRIPT = Path("/root/project/modal/scripts/build_cutlass_runner.sh")
 _BUILD_CUBLASLT_RUNNER_SCRIPT = Path("/root/project/modal/scripts/build_cublaslt_runner.sh")
+_BUILD_AGENT_KV_RUNNER_SCRIPT = Path("/root/project/modal/scripts/build_agent_kv_runner.sh")
 _BUILD_TRACER_SCRIPT = Path("/root/project/modal/scripts/build_tracer.sh")
 _RUN_TRACE_JOB_SCRIPT = Path("/root/project/modal/scripts/run_trace_job.sh")
 _DOWNLOAD_ARTIFACTS_SCRIPT = _MODAL_ROOT / "scripts" / "download_artifacts.py"
@@ -38,11 +39,13 @@ image = (
     .add_local_dir(str(_MODAL_ROOT / "scripts"), remote_path="/root/project/modal/scripts", copy=True)
     .add_local_dir(str(_MODAL_ROOT / "cutlass_runner"), remote_path="/root/project/modal/cutlass_runner", copy=True)
     .add_local_dir(str(_MODAL_ROOT / "cublaslt_runner"), remote_path="/root/project/modal/cublaslt_runner", copy=True)
+    .add_local_dir(str(_MODAL_ROOT / "agent_kv_runner"), remote_path="/root/project/modal/agent_kv_runner", copy=True)
     .add_local_dir(str(_REPO_ROOT / "util" / "tracer_nvbit"), remote_path="/root/project/util/tracer_nvbit", copy=True)
     .run_commands(
         "cd /root/project && bash modal/scripts/fetch_cutlass.sh",
         "cd /root/project && bash modal/scripts/build_cutlass_runner.sh",
         "cd /root/project && bash modal/scripts/build_cublaslt_runner.sh",
+        "cd /root/project && bash modal/scripts/build_agent_kv_runner.sh",
         "cd /root/project && ARCH=sm_80 bash modal/scripts/build_tracer.sh",
     )
 )
@@ -51,6 +54,8 @@ trace_volume = modal.Volume.from_name(_ARTIFACT_VOLUME_NAME, create_if_missing=T
 
 
 def _validate_shape(m: int, n: int, k: int, runner_kind: str) -> None:
+    if runner_kind == "agent_kv":
+        return
     if runner_kind == "cutlass":
         allowed = {(512, 512, 512), (512, 12288, 12288)}
     elif runner_kind == "cublaslt":
@@ -105,10 +110,10 @@ def run_trace(
     dynamic_kernel_range: str = "",
 ) -> dict[str, object]:
     _validate_shape(m, n, k, runner_kind=runner_kind)
-    if dtype not in {"fp16", "bf16"}:
+    if runner_kind != "agent_kv" and dtype not in {"fp16", "bf16"}:
         raise ValueError("dtype must be fp16 or bf16")
     if not job_name:
-        job_name = _default_job_name(dtype, m, n, k)
+        job_name = _default_job_name(dtype, m, n, k) if runner_kind != "agent_kv" else f"agent-kv-bs{m}-kv{n}-prefix{k}-{int(time.time())}"
 
     trace_root = Path("/artifacts") / job_name
     env = os.environ.copy()
@@ -131,6 +136,20 @@ def run_trace(
         "--k",
         str(k),
     ]
+    if runner_kind == "agent_kv":
+        cmd = [
+            str(_RUN_TRACE_JOB_SCRIPT),
+            "--runner-kind",
+            "agent_kv",
+            "--batch",
+            str(m),
+            "--kvlen",
+            str(n),
+            "--shared-prefix",
+            str(k),
+            "--samples-per-page",
+            "32",
+        ]
     if runner_bin:
         cmd.extend(["--runner-bin", runner_bin])
     subprocess.run(cmd, cwd="/root/project", env=env, check=True)
