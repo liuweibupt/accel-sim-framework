@@ -178,6 +178,7 @@ def run_trace(
             "--samples-per-block",
             "32",
         ]
+        env.setdefault("DYNAMIC_KERNEL_RANGE", "7-11")
     if runner_bin:
         cmd.extend(["--runner-bin", runner_bin])
     subprocess.run(cmd, cwd="/root/project", env=env, check=True)
