@@ -18,6 +18,7 @@ if [[ ! -x "${CUDA_HOME:-}/bin/nvcc" ]]; then
   exit 1
 fi
 export CUDAToolkit_ROOT="${CUDAToolkit_ROOT:-${CUDA_HOME}}"
+rm -rf "${BUILD_DIR}"
 cmake -S "${RUNNER_SOURCE_DIR}" -B "${BUILD_DIR}" \
   -DCMAKE_BUILD_TYPE=Release \
   -DCUDAToolkit_ROOT="${CUDAToolkit_ROOT}" \
