@@ -83,6 +83,21 @@ std::unordered_map<CUcontext, int> ctx_kernelid;
 std::unordered_map<CUcontext, FILE *> ctx_resultsFile;
 std::unordered_map<CUcontext, std::string> ctx_current_kernel_name;
 
+struct KernelStaticMetadata {
+  int nregs = 0;
+  int shmem_static_nbytes = 0;
+  int binary_version = 0;
+  bool used_nvbit_config = false;
+  bool used_cubin_target = false;
+};
+
+struct DriverAttributeRequest {
+  CUfunction func;
+  CUfunction_attribute attribute;
+  const char *name;
+};
+
+std::unordered_map<CUfunction, KernelStaticMetadata> kernel_metadata_cache;
 std::string kernel_ranges = "";
 
 struct KernelRange {
@@ -190,6 +205,156 @@ bool should_trace_kernel(uint64_t kernel_id, const std::string &kernel_name) {
     }
   }
   return false;
+}
+
+std::string driver_error_name(CUresult result) {
+  const char *name = nullptr;
+  CUresult name_result = cuGetErrorName(result, &name);
+  if (name_result == CUDA_SUCCESS && name != nullptr)
+    return name;
+  return "CUDA_ERROR_UNKNOWN";
+}
+
+bool read_driver_attribute(const DriverAttributeRequest &request, int &value) {
+  int candidate = 0;
+  CUresult result =
+      cuFuncGetAttribute(&candidate, request.attribute, request.func);
+  if (result != CUDA_SUCCESS) {
+    if (verbose >= 1) {
+      fprintf(stderr, "cuFuncGetAttribute(%s) failed with %s\n", request.name,
+              driver_error_name(result).c_str());
+    }
+    return false;
+  }
+  value = candidate;
+  return true;
+}
+
+std::string shell_quote(const std::string &value) {
+  std::string quoted = "'";
+  for (char ch : value) {
+    if (ch == '\'')
+      quoted += "'\\''";
+    else
+      quoted += ch;
+  }
+  quoted += "'";
+  return quoted;
+}
+
+int parse_nvdisasm_target(const std::string &line) {
+  static const std::regex target_regex("\\.target\\s+sm_([0-9]+)");
+  std::smatch match;
+  if (!std::regex_search(line, match, target_regex))
+    return 0;
+  return std::stoi(match[1].str());
+}
+
+int read_binary_version_from_cubin(CUcontext ctx, CUfunction func) {
+  char cubin_path[512];
+  snprintf(cubin_path, sizeof(cubin_path),
+           "/tmp/accelsim_nvbit_cubin_%ld_%lx_%lx.cubin", (long)getpid(),
+           (unsigned long)ctx, (unsigned long)func);
+  remove(cubin_path);
+
+  (void)nvbit_dump_cubin(ctx, func, cubin_path);
+  FILE *cubin_file = fopen(cubin_path, "rb");
+  if (cubin_file == nullptr)
+    return 0;
+  fclose(cubin_file);
+
+  std::string command = "nvdisasm " + shell_quote(cubin_path) + " 2>/dev/null";
+  FILE *pipe = popen(command.c_str(), "r");
+  if (pipe == nullptr) {
+    remove(cubin_path);
+    return 0;
+  }
+
+  char line[1024];
+  int binary_version = 0;
+  while (fgets(line, sizeof(line), pipe) != nullptr) {
+    binary_version = parse_nvdisasm_target(line);
+    if (binary_version != 0)
+      break;
+  }
+
+  pclose(pipe);
+  remove(cubin_path);
+  return binary_version;
+}
+
+[[noreturn]] void fail_kernel_metadata(CUcontext ctx, CUfunction func,
+                                       const char *reason) {
+  fprintf(stderr,
+          "Accel-Sim tracer failed to resolve metadata for kernel %s "
+          "(ctx=0x%lx, func=0x%lx): %s\n",
+          nvbit_get_func_name(ctx, func, true), (unsigned long)ctx,
+          (unsigned long)func, reason);
+  fflush(stderr);
+  _exit(EXIT_FAILURE);
+}
+
+void fill_metadata_from_nvbit_config(CUcontext ctx, CUfunction func,
+                                     KernelStaticMetadata &metadata) {
+  func_config_t config = {};
+  nvbit_get_func_config(ctx, func, &config);
+  metadata.nregs = config.num_registers;
+  metadata.shmem_static_nbytes = config.shmem_static_nbytes;
+  metadata.used_nvbit_config = true;
+}
+
+void log_metadata_source(CUcontext ctx, CUfunction func,
+                         const KernelStaticMetadata &metadata) {
+  if (!metadata.used_nvbit_config && !metadata.used_cubin_target)
+    return;
+
+  fprintf(stderr,
+          "Accel-Sim tracer recovered metadata for %s via%s%s "
+          "(nregs=%d, static_shmem=%d, binary_version=%d)\n",
+          nvbit_get_func_name(ctx, func, true),
+          metadata.used_nvbit_config ? " nvbit_get_func_config" : "",
+          metadata.used_cubin_target ? " nvdisasm(cubin)" : "",
+          metadata.nregs, metadata.shmem_static_nbytes,
+          metadata.binary_version);
+}
+
+KernelStaticMetadata resolve_kernel_static_metadata(CUcontext ctx,
+                                                    CUfunction func) {
+  auto cached = kernel_metadata_cache.find(func);
+  if (cached != kernel_metadata_cache.end())
+    return cached->second;
+
+  KernelStaticMetadata metadata;
+  bool nregs_ok = read_driver_attribute(
+      {func, CU_FUNC_ATTRIBUTE_NUM_REGS, "CU_FUNC_ATTRIBUTE_NUM_REGS"},
+      metadata.nregs);
+  bool shmem_ok = read_driver_attribute({func,
+                                         CU_FUNC_ATTRIBUTE_SHARED_SIZE_BYTES,
+                                         "CU_FUNC_ATTRIBUTE_SHARED_SIZE_BYTES"},
+                                        metadata.shmem_static_nbytes);
+  bool binary_ok = read_driver_attribute(
+      {func, CU_FUNC_ATTRIBUTE_BINARY_VERSION,
+       "CU_FUNC_ATTRIBUTE_BINARY_VERSION"},
+      metadata.binary_version);
+
+  if (!nregs_ok || !shmem_ok)
+    fill_metadata_from_nvbit_config(ctx, func, metadata);
+
+  if (!binary_ok || metadata.binary_version == 0) {
+    metadata.binary_version = read_binary_version_from_cubin(ctx, func);
+    metadata.used_cubin_target = true;
+  }
+
+  if (metadata.nregs < 0)
+    fail_kernel_metadata(ctx, func, "negative register count");
+  if (metadata.shmem_static_nbytes < 0)
+    fail_kernel_metadata(ctx, func, "negative static shared-memory size");
+  if (metadata.binary_version <= 0)
+    fail_kernel_metadata(ctx, func, "missing cubin target sm version");
+
+  log_metadata_source(ctx, func, metadata);
+  kernel_metadata_cache[func] = metadata;
+  return metadata;
 }
 
 enum address_format { list_all = 0, base_stride = 1, base_delta = 2 };
@@ -501,17 +666,8 @@ static void enter_kernel_launch(CUcontext ctx, CUfunction func,
     hStream = p->hStream;
   }
 
-  // Get the number of registers and shared memory size for the kernel
-  int nregs;
-  CUDA_SAFECALL(cuFuncGetAttribute(&nregs, CU_FUNC_ATTRIBUTE_NUM_REGS, func));
-
-  int shmem_static_nbytes;
-  CUDA_SAFECALL(cuFuncGetAttribute(&shmem_static_nbytes,
-                                   CU_FUNC_ATTRIBUTE_SHARED_SIZE_BYTES, func));
-
-  int binary_version;
-  CUDA_SAFECALL(cuFuncGetAttribute(&binary_version,
-                                   CU_FUNC_ATTRIBUTE_BINARY_VERSION, func));
+  KernelStaticMetadata static_metadata =
+      resolve_kernel_static_metadata(ctx, func);
 
   // Instrument the kernel if needed
   instrument_function_if_needed(ctx, func);
@@ -551,9 +707,10 @@ static void enter_kernel_launch(CUcontext ctx, CUfunction func,
     fprintf(ctx_resultsFile[ctx], "-block dim = (%d,%d,%d)\n", blockDimX,
             blockDimY, blockDimZ);
     fprintf(ctx_resultsFile[ctx], "-shmem = %d\n",
-            shmem_static_nbytes + sharedMemBytes);
-    fprintf(ctx_resultsFile[ctx], "-nregs = %d\n", nregs);
-    fprintf(ctx_resultsFile[ctx], "-binary version = %d\n", binary_version);
+            static_metadata.shmem_static_nbytes + sharedMemBytes);
+    fprintf(ctx_resultsFile[ctx], "-nregs = %d\n", static_metadata.nregs);
+    fprintf(ctx_resultsFile[ctx], "-binary version = %d\n",
+            static_metadata.binary_version);
     fprintf(ctx_resultsFile[ctx], "-cuda stream id = %lu\n", (uint64_t)hStream);
     fprintf(ctx_resultsFile[ctx], "-shmem base_addr = 0x%016lx\n",
             (uint64_t)nvbit_get_shmem_base_addr(ctx));
