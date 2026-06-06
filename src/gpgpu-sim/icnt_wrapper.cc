@@ -158,6 +158,37 @@ void icnt_reg_options(class OptionParser* opp) {
                          &g_inct_config.verbose, "inct_verbose", "0");
   option_parser_register(opp, "-icnt_grant_cycles", OPT_UINT32,
                          &g_inct_config.grant_cycles, "grant_cycles", "1");
+  option_parser_register(opp, "-icnt_a100_gpc_count", OPT_UINT32,
+                         &g_inct_config.a100_gpc_count,
+                         "A100-like GPC groups for hierarchical local icnt",
+                         "7");
+  option_parser_register(opp, "-icnt_a100_fbp_count", OPT_UINT32,
+                         &g_inct_config.a100_fbp_count,
+                         "A100-like FBP groups for hierarchical local icnt",
+                         "10");
+  option_parser_register(opp, "-icnt_a100_req_gpc_limit", OPT_UINT32,
+                         &g_inct_config.a100_req_gpc_limit,
+                         "per-cycle request grants per A100-like GPC", "8");
+  option_parser_register(opp, "-icnt_a100_req_fbp_limit", OPT_UINT32,
+                         &g_inct_config.a100_req_fbp_limit,
+                         "per-cycle request grants per A100-like FBP", "4");
+  option_parser_register(opp, "-icnt_a100_reply_fbp_limit", OPT_UINT32,
+                         &g_inct_config.a100_reply_fbp_limit,
+                         "per-cycle reply grants per A100-like FBP", "4");
+  option_parser_register(opp, "-icnt_a100_reply_gpc_limit", OPT_UINT32,
+                         &g_inct_config.a100_reply_gpc_limit,
+                         "per-cycle reply grants per A100-like GPC", "8");
+  option_parser_register(opp, "-icnt_a100_partition_count", OPT_UINT32,
+                         &g_inct_config.a100_partition_count,
+                         "A100-like coarse GPU partitions", "2");
+  option_parser_register(opp, "-icnt_a100_near_extra_latency", OPT_UINT32,
+                         &g_inct_config.a100_near_extra_latency,
+                         "extra cycles for near-partition A100-like icnt packets",
+                         "0");
+  option_parser_register(opp, "-icnt_a100_far_extra_latency", OPT_UINT32,
+                         &g_inct_config.a100_far_extra_latency,
+                         "extra cycles for far-partition A100-like icnt packets",
+                         "94");
 }
 
 void icnt_wrapper_init() {

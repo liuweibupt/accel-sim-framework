@@ -31,6 +31,7 @@
 #include <fstream>
 #include <iomanip>
 #include <iostream>
+#include <set>
 #include <sstream>
 #include <utility>
 
@@ -48,6 +49,15 @@ xbar_router::xbar_router(unsigned router_id, enum Interconnect_type m_type,
   verbose = m_localinct_config.verbose;
   grant_cycles = m_localinct_config.grant_cycles;
   grant_cycles_count = m_localinct_config.grant_cycles;
+  a100_gpc_count = std::max(1u, m_localinct_config.a100_gpc_count);
+  a100_fbp_count = std::max(1u, m_localinct_config.a100_fbp_count);
+  a100_req_gpc_limit = std::max(1u, m_localinct_config.a100_req_gpc_limit);
+  a100_req_fbp_limit = std::max(1u, m_localinct_config.a100_req_fbp_limit);
+  a100_reply_fbp_limit = std::max(1u, m_localinct_config.a100_reply_fbp_limit);
+  a100_reply_gpc_limit = std::max(1u, m_localinct_config.a100_reply_gpc_limit);
+  a100_partition_count = std::max(1u, m_localinct_config.a100_partition_count);
+  a100_near_extra_latency = m_localinct_config.a100_near_extra_latency;
+  a100_far_extra_latency = m_localinct_config.a100_far_extra_latency;
   in_buffers.resize(total_nodes);
   out_buffers.resize(total_nodes);
   next_node.resize(total_nodes, 0);
@@ -70,6 +80,9 @@ xbar_router::xbar_router(unsigned router_id, enum Interconnect_type m_type,
   out_buffer_util = 0;
   in_buffer_util = 0;
   packets_num = 0;
+  a100_near_packets = 0;
+  a100_far_packets = 0;
+  a100_added_latency_cycles = 0;
   conflicts_util = 0;
   cycles_util = 0;
   reqs_util = 0;
@@ -88,7 +101,8 @@ void* xbar_router::Pop(unsigned ouput_deviceID) {
   assert(ouput_deviceID < total_nodes);
   void* data = NULL;
 
-  if (!out_buffers[ouput_deviceID].empty()) {
+  if (!out_buffers[ouput_deviceID].empty() &&
+      out_buffers[ouput_deviceID].front().ready_cycle <= cycles) {
     data = out_buffers[ouput_deviceID].front().data;
     out_buffers[ouput_deviceID].pop();
   }
@@ -107,7 +121,8 @@ bool xbar_router::Has_Buffer_In(unsigned input_deviceID, unsigned size,
   return has_buffer;
 }
 
-bool xbar_router::Has_Buffer_Out(unsigned output_deviceID, unsigned size) {
+bool xbar_router::Has_Buffer_Out(unsigned output_deviceID,
+                                 unsigned size) const {
   return (out_buffers[output_deviceID].size() + size <= out_buffer_limit);
 }
 
@@ -118,6 +133,8 @@ void xbar_router::Advance() {
     iSLIP_Advance();
   else if (arbit_type == PERFECT)
     Perfect_Advance();
+  else if (arbit_type == NVIDIA_A100_HIER)
+    NvidiaA100HierAdvance();
   else
     assert(0);
 }
@@ -133,6 +150,130 @@ void xbar_router::Perfect_Advance() {
     }
   }
 };
+
+unsigned xbar_router::ShaderToGpc(unsigned shader_id) const {
+  assert(shader_id < _n_shader);
+  return std::min(a100_gpc_count - 1,
+                  (shader_id * a100_gpc_count) / std::max(1u, _n_shader));
+}
+
+unsigned xbar_router::MemoryToFbp(unsigned memory_device_id) const {
+  assert(memory_device_id >= _n_shader);
+  const unsigned memory_id = memory_device_id - _n_shader;
+  return std::min(a100_fbp_count - 1,
+                  (memory_id * a100_fbp_count) / std::max(1u, _n_mem));
+}
+
+unsigned xbar_router::GroupToPartition(unsigned group_id,
+                                       unsigned group_count) const {
+  return std::min(a100_partition_count - 1,
+                  (group_id * a100_partition_count) /
+                      std::max(1u, group_count));
+}
+
+unsigned xbar_router::DeviceToPartition(unsigned device_id) const {
+  if (device_id < _n_shader) {
+    return GroupToPartition(ShaderToGpc(device_id), a100_gpc_count);
+  }
+  return GroupToPartition(MemoryToFbp(device_id), a100_fbp_count);
+}
+
+unsigned xbar_router::NvidiaA100PacketDelay(const Packet& packet,
+                                            unsigned input_deviceID) const {
+  const bool far =
+      DeviceToPartition(input_deviceID) != DeviceToPartition(packet.output_deviceID);
+  return far ? a100_far_extra_latency : a100_near_extra_latency;
+}
+
+void xbar_router::StageNvidiaA100Packet(Packet packet,
+                                        unsigned input_deviceID) {
+  const unsigned delay = NvidiaA100PacketDelay(packet, input_deviceID);
+  packet.ready_cycle = cycles + delay;
+  out_buffers[packet.output_deviceID].push(packet);
+  a100_added_latency_cycles += delay;
+  if (DeviceToPartition(input_deviceID) == DeviceToPartition(packet.output_deviceID)) {
+    a100_near_packets++;
+  } else {
+    a100_far_packets++;
+  }
+}
+
+bool xbar_router::CanIssueNvidiaA100Packet(
+    const Packet& packet, unsigned input_deviceID,
+    const vector<unsigned>& gpc_issued, const vector<unsigned>& fbp_issued,
+    const vector<bool>& output_issued) const {
+  if (!Has_Buffer_Out(packet.output_deviceID, 1)) return false;
+  if (output_issued[packet.output_deviceID]) return false;
+
+  if (router_type == REQ_NET) {
+    const unsigned gpc = ShaderToGpc(input_deviceID);
+    const unsigned fbp = MemoryToFbp(packet.output_deviceID);
+    return gpc_issued[gpc] < a100_req_gpc_limit &&
+           fbp_issued[fbp] < a100_req_fbp_limit;
+  }
+
+  const unsigned fbp = MemoryToFbp(input_deviceID);
+  const unsigned gpc = ShaderToGpc(packet.output_deviceID);
+  return fbp_issued[fbp] < a100_reply_fbp_limit &&
+         gpc_issued[gpc] < a100_reply_gpc_limit;
+}
+
+void xbar_router::CountNvidiaA100Packet(const Packet& packet,
+                                        unsigned input_deviceID,
+                                        vector<unsigned>& gpc_issued,
+                                        vector<unsigned>& fbp_issued) const {
+  if (router_type == REQ_NET) {
+    gpc_issued[ShaderToGpc(input_deviceID)]++;
+    fbp_issued[MemoryToFbp(packet.output_deviceID)]++;
+    return;
+  }
+  fbp_issued[MemoryToFbp(input_deviceID)]++;
+  gpc_issued[ShaderToGpc(packet.output_deviceID)]++;
+}
+
+void xbar_router::NvidiaA100HierAdvance() {
+  bool active = false;
+  unsigned conflict_sub = 0;
+  unsigned reqs = 0;
+  vector<bool> issued(total_nodes, false);
+  vector<unsigned> gpc_issued(a100_gpc_count, 0);
+  vector<unsigned> fbp_issued(a100_fbp_count, 0);
+
+  for (unsigned i = 0; i < total_nodes; ++i) {
+    const unsigned node_id = (i + next_node_id) % total_nodes;
+    if (in_buffers[node_id].empty()) continue;
+
+    active = true;
+    Packet packet = in_buffers[node_id].front();
+    if (CanIssueNvidiaA100Packet(packet, node_id, gpc_issued, fbp_issued,
+                                 issued)) {
+      StageNvidiaA100Packet(packet, node_id);
+      in_buffers[node_id].pop();
+      issued[packet.output_deviceID] = true;
+      CountNvidiaA100Packet(packet, node_id, gpc_issued, fbp_issued);
+      reqs++;
+      continue;
+    }
+
+    if (!Has_Buffer_Out(packet.output_deviceID, 1)) out_buffer_full++;
+    conflict_sub++;
+  }
+
+  next_node_id = (next_node_id + 1) % total_nodes;
+  conflicts += conflict_sub;
+  if (active) {
+    conflicts_util += conflict_sub;
+    cycles_util++;
+    reqs_util += reqs;
+  }
+
+  for (unsigned i = 0; i < total_nodes; ++i) {
+    in_buffer_util += in_buffers[i].size();
+    out_buffer_util += out_buffers[i].size();
+  }
+
+  cycles++;
+}
 
 void xbar_router::RR_Advance() {
   bool active = false;
@@ -415,6 +556,14 @@ void LocalInterconnect::DisplayStats() const {
   printf("Req_Network_out_buffer_avg_util = %12.4f\n",
          ((float)(net[REQ_NET]->out_buffer_util) / (net[REQ_NET]->cycles) /
           net[REQ_NET]->active_out_buffers));
+  if (m_inct_config.arbiter_algo == NVIDIA_A100_HIER) {
+    printf("Req_Network_a100_near_packets = %lld\n",
+           net[REQ_NET]->a100_near_packets);
+    printf("Req_Network_a100_far_packets = %lld\n",
+           net[REQ_NET]->a100_far_packets);
+    printf("Req_Network_a100_added_latency_cycles = %lld\n",
+           net[REQ_NET]->a100_added_latency_cycles);
+  }
 
   printf("\n");
   printf("Reply_Network_injected_packets_num = %lld\n",
@@ -439,6 +588,14 @@ void LocalInterconnect::DisplayStats() const {
   printf("Reply_Network_out_buffer_avg_util = %12.4f\n",
          ((float)(net[REPLY_NET]->out_buffer_util) / (net[REPLY_NET]->cycles) /
           net[REPLY_NET]->active_out_buffers));
+  if (m_inct_config.arbiter_algo == NVIDIA_A100_HIER) {
+    printf("Reply_Network_a100_near_packets = %lld\n",
+           net[REPLY_NET]->a100_near_packets);
+    printf("Reply_Network_a100_far_packets = %lld\n",
+           net[REPLY_NET]->a100_far_packets);
+    printf("Reply_Network_a100_added_latency_cycles = %lld\n",
+           net[REPLY_NET]->a100_added_latency_cycles);
+  }
 }
 
 void LocalInterconnect::DisplayOverallStats() const {}

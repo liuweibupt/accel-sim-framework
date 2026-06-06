@@ -40,7 +40,8 @@ enum Interconnect_type { REQ_NET = 0, REPLY_NET = 1 };
 enum Arbiteration_type {
   NAIVE_RR = 0,  //
   iSLIP,
-  PERFECT
+  PERFECT,
+  NVIDIA_A100_HIER
 };
 
 struct inct_config {
@@ -51,6 +52,15 @@ struct inct_config {
   Arbiteration_type arbiter_algo;
   unsigned verbose;
   unsigned grant_cycles;
+  unsigned a100_gpc_count;
+  unsigned a100_fbp_count;
+  unsigned a100_req_gpc_limit;
+  unsigned a100_req_fbp_limit;
+  unsigned a100_reply_fbp_limit;
+  unsigned a100_reply_gpc_limit;
+  unsigned a100_partition_count;
+  unsigned a100_near_extra_latency;
+  unsigned a100_far_extra_latency;
 };
 
 class xbar_router {
@@ -67,7 +77,7 @@ class xbar_router {
   bool Busy() const;
   bool Has_Buffer_In(unsigned input_deviceID, unsigned size,
                      bool update_counter = false);
-  bool Has_Buffer_Out(unsigned output_deviceID, unsigned size);
+  bool Has_Buffer_Out(unsigned output_deviceID, unsigned size) const;
 
   // some stats
   unsigned long long cycles;
@@ -80,20 +90,40 @@ class xbar_router {
   unsigned long long in_buffer_full;
   unsigned long long in_buffer_util;
   unsigned long long packets_num;
+  unsigned long long a100_near_packets;
+  unsigned long long a100_far_packets;
+  unsigned long long a100_added_latency_cycles;
 
  private:
-  void iSLIP_Advance();
-  void RR_Advance();
-  void Perfect_Advance();
-
   struct Packet {
     Packet(void* m_data, unsigned m_output_deviceID) {
       data = m_data;
       output_deviceID = m_output_deviceID;
+      ready_cycle = 0;
     }
     void* data;
     unsigned output_deviceID;
+    unsigned long long ready_cycle;
   };
+
+  void iSLIP_Advance();
+  void RR_Advance();
+  void Perfect_Advance();
+  void NvidiaA100HierAdvance();
+  bool CanIssueNvidiaA100Packet(const Packet& packet, unsigned input_deviceID,
+                                const vector<unsigned>& gpc_issued,
+                                const vector<unsigned>& fbp_issued,
+                                const vector<bool>& output_issued) const;
+  void CountNvidiaA100Packet(const Packet& packet, unsigned input_deviceID,
+                             vector<unsigned>& gpc_issued,
+                             vector<unsigned>& fbp_issued) const;
+  unsigned ShaderToGpc(unsigned shader_id) const;
+  unsigned MemoryToFbp(unsigned memory_device_id) const;
+  unsigned GroupToPartition(unsigned group_id, unsigned group_count) const;
+  unsigned DeviceToPartition(unsigned device_id) const;
+  unsigned NvidiaA100PacketDelay(const Packet& packet,
+                                 unsigned input_deviceID) const;
+  void StageNvidiaA100Packet(Packet packet, unsigned input_deviceID);
   vector<queue<Packet> > in_buffers;
   vector<queue<Packet> > out_buffers;
   unsigned _n_shader, _n_mem, total_nodes;
@@ -108,6 +138,15 @@ class xbar_router {
 
   unsigned grant_cycles;
   unsigned grant_cycles_count;
+  unsigned a100_gpc_count;
+  unsigned a100_fbp_count;
+  unsigned a100_req_gpc_limit;
+  unsigned a100_req_fbp_limit;
+  unsigned a100_reply_fbp_limit;
+  unsigned a100_reply_gpc_limit;
+  unsigned a100_partition_count;
+  unsigned a100_near_extra_latency;
+  unsigned a100_far_extra_latency;
 
   friend class LocalInterconnect;
 };
