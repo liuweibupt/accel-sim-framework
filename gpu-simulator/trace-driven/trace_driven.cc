@@ -360,8 +360,12 @@ bool trace_warp_inst_t::parse_from_trace_struct(
 
       break;
     case OP_BAR:
-      // TO DO: fill this correctly
-      bar_id = 0;
+      // Preserve barrier phase identity in trace-driven replay. SM80 kernels
+      // can issue multiple BAR instructions in different software-pipeline
+      // phases; forcing them all to bar_id=0 collapses distinct phases into a
+      // single simulator barrier state. Use the barrier PC to derive a stable
+      // synthetic barrier id within the simulator's barrier-slot budget.
+      bar_id = (trace.m_pc >> 4) % MAX_BARRIERS_PER_CTA;
       bar_count = (unsigned)-1;
       bar_type = SYNC;
       // TO DO
@@ -620,7 +624,17 @@ void trace_shader_core_ctx::init_traces(unsigned start_warp, unsigned end_warp,
   // set the pc from the traces and ignore the functional model
   for (unsigned i = start_warp; i < end_warp; ++i) {
     trace_shd_warp_t *m_trace_warp = static_cast<trace_shd_warp_t *>(m_warp[i]);
-    m_trace_warp->set_next_pc(m_trace_warp->get_start_trace_pc());
+    if (m_trace_warp->warp_traces.empty()) {
+      for (unsigned t = 0; t < m_warp_size; t++) {
+        if (m_warp[i]->test_active(t)) {
+          m_warp[i]->set_completed(t);
+        }
+      }
+      m_barriers.warp_exit(i);
+      m_trace_warp->set_next_pc(0);
+    } else {
+      m_trace_warp->set_next_pc(m_trace_warp->get_start_trace_pc());
+    }
     m_trace_warp->set_kernel(&trace_kernel);
   }
 }

@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
-set -u
+set -Eeuo pipefail
 export CUDA_INSTALL_PATH=/usr/local/cuda
 export PATH=/tmp/gpgpu-local-tools:${PATH}
 export LIBRARY_PATH=/tmp/gpgpu-local-lib:${LIBRARY_PATH:-}
 set +u
 source /work/accel-sim-framework/gpu-simulator/setup_environment.sh >/tmp/accelsim_setup_large_bandcodec_nvidia_noc.log 2>&1
-set -u
+set -Eeuo pipefail
 
 OUTDIR=/work/accel-sim-framework/gpu-simulator/bandcodec_runs/large_lpddr5x_bandcodec_nvidia_noc_$(date -u '+%Y%m%d-%H%M%S')
 mkdir -p "$OUTDIR"
@@ -13,6 +13,21 @@ TRACE=/work/accel-sim-framework/.worktrees/modal-a100-cutlass-trace/modal/artifa
 CFG1=/work/accel-sim-framework/gpu-simulator/gpgpu-sim/configs/tested-cfgs/SM80_A100_LPDDR5X_NVIDIA_NOC/gpgpusim.config
 CFG2=/work/accel-sim-framework/gpu-simulator/configs/tested-cfgs/SM80_A100_LPDDR5X_NVIDIA_NOC/trace.config
 BIN=/work/accel-sim-framework/gpu-simulator/bin/release/accel-sim.out
+RC_RECORDED=0
+record_exit() {
+  local rc=$?
+  if [[ "$RC_RECORDED" == "0" ]]; then
+    {
+      echo "end_utc=$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
+      echo "rc=$rc"
+      echo "failing_command=${BASH_COMMAND}"
+      echo "failing_line=${BASH_LINENO[0]:-unknown}"
+    } >> "$OUTDIR/manifest.txt"
+    RC_RECORDED=1
+  fi
+  exit "$rc"
+}
+trap record_exit EXIT
 cat > "$OUTDIR/manifest.txt" <<MANIFEST
 start_utc=$(date -u '+%Y-%m-%dT%H:%M:%SZ')
 trace=$TRACE
@@ -48,4 +63,5 @@ rc=$?
   echo "end_utc=$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
   echo "rc=$rc"
 } >> "$OUTDIR/manifest.txt"
+RC_RECORDED=1
 exit $rc

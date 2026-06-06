@@ -311,6 +311,7 @@ void group_per_block(const char *filepath) {
     }
 
     else if (line[0] == '-') {
+      ss.clear();
       ss.str(line);
       ss.ignore();
       ss >> string1 >> string2;
@@ -347,7 +348,7 @@ void group_per_block(const char *filepath) {
       cout << line << endl;
       continue;
     } else {
-
+      ss.clear();
       ss.str(line);
       ss >> tb_id_x >> tb_id_y >> tb_id_z >> warpid_tb;
       tb_id =
