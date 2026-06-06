@@ -3804,6 +3804,18 @@ static void debug_dump_barrier_state(
     const barrier_set_t::cta_to_warp_t &cta_to_warps,
     const barrier_set_t::bar_id_to_warp_t &bar_id_to_warps,
     const warp_set_t &warp_active, const warp_set_t &warp_at_barrier) {
+#ifndef GPGPUSIM_ENABLE_BARRIER_DEBUG
+  (void)tag;
+  (void)cta_id;
+  (void)warp_id;
+  (void)bar_id;
+  (void)bar_count;
+  (void)cta_to_warps;
+  (void)bar_id_to_warps;
+  (void)warp_active;
+  (void)warp_at_barrier;
+  return;
+#else
   barrier_set_t::cta_to_warp_t::const_iterator cta_it =
       cta_to_warps.find(cta_id);
   if (cta_it == cta_to_warps.end()) {
@@ -3836,6 +3848,7 @@ static void debug_dump_barrier_state(
     }
   }
   fflush(stderr);
+#endif
 }
 
 // during cta allocation
