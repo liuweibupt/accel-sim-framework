@@ -360,12 +360,8 @@ bool trace_warp_inst_t::parse_from_trace_struct(
 
       break;
     case OP_BAR:
-      // Preserve barrier phase identity in trace-driven replay. SM80 kernels
-      // can issue multiple BAR instructions in different software-pipeline
-      // phases; forcing them all to bar_id=0 collapses distinct phases into a
-      // single simulator barrier state. Use the barrier PC to derive a stable
-      // synthetic barrier id within the simulator's barrier-slot budget.
-      bar_id = (trace.m_pc >> 4) % MAX_BARRIERS_PER_CTA;
+      assert(trace.imm < MAX_BARRIERS_PER_CTA);
+      bar_id = trace.imm;
       bar_count = (unsigned)-1;
       bar_type = SYNC;
       // TO DO
