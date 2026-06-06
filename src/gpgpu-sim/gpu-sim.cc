@@ -322,6 +322,28 @@ void memory_config::reg_options(class OptionParser *opp) {
   // SST mode activate
   option_parser_register(opp, "-SST_mode", OPT_BOOL, &SST_mode, "SST mode",
                          "0");
+  option_parser_register(opp, "-gpgpu_bandcodec_enable", OPT_UINT32,
+                         &bandcodec_enable,
+                         "enable BandCodec compressed weight memory service",
+                         "0");
+  option_parser_register(opp, "-gpgpu_bandcodec_weight_base", OPT_UINT64,
+                         &bandcodec_weight_base,
+                         "BandCodec weight range base address", "0");
+  option_parser_register(opp, "-gpgpu_bandcodec_weight_bytes", OPT_UINT64,
+                         &bandcodec_weight_bytes,
+                         "BandCodec weight range size in bytes", "0");
+  option_parser_register(opp, "-gpgpu_bandcodec_compression_ratio", OPT_UINT32,
+                         &bandcodec_compression_ratio,
+                         "BandCodec memory-service compression ratio", "4");
+  option_parser_register(opp, "-gpgpu_bandcodec_record_bytes", OPT_UINT32,
+                         &bandcodec_record_bytes,
+                         "native bytes per BandCodec decoder record", "256");
+  option_parser_register(opp, "-gpgpu_bandcodec_decoder_count", OPT_UINT32,
+                         &bandcodec_decoder_count,
+                         "number of BandCodec read-side decoders", "100");
+  option_parser_register(opp, "-gpgpu_bandcodec_decoder_cycles_per_record",
+                         OPT_UINT32, &bandcodec_decoder_cycles_per_record,
+                         "decoder service cycles per native record", "4");
   m_address_mapping.addrdec_setoption(opp);
 }
 

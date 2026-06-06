@@ -156,6 +156,12 @@ class memory_partition_unit {
   };
   std::list<dram_delay_t> m_dram_latency_queue;
 
+  struct bandcodec_decode_delay_t {
+    unsigned long long ready_cycle;
+    class mem_fetch *req;
+  };
+  std::list<bandcodec_decode_delay_t> m_bandcodec_decode_queue;
+
   class gpgpu_sim *m_gpu;
 };
 

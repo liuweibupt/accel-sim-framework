@@ -34,6 +34,7 @@
 
 #include <stdint.h>
 #include <stdio.h>
+#include <algorithm>
 #include <fstream>
 #include <iostream>
 #include <list>
@@ -315,6 +316,28 @@ class memory_config {
   }
   void reg_options(class OptionParser *opp);
 
+  bool bandcodec_enabled() const { return bandcodec_enable != 0; }
+  bool bandcodec_in_weight_range(new_addr_type addr) const {
+    if (!bandcodec_enabled()) return false;
+    if (bandcodec_weight_bytes == 0) return false;
+    const unsigned long long start = bandcodec_weight_base;
+    const unsigned long long end = start + bandcodec_weight_bytes;
+    return addr >= start && addr < end;
+  }
+  unsigned bandcodec_compressed_size(unsigned native_bytes) const {
+    if (!bandcodec_enabled()) return native_bytes;
+    const unsigned ratio = std::max(1u, bandcodec_compression_ratio);
+    return std::max(1u, (native_bytes + ratio - 1) / ratio);
+  }
+  unsigned bandcodec_decoder_delay(unsigned native_bytes) const {
+    if (!bandcodec_enabled()) return 0;
+    const unsigned record_bytes = std::max(1u, bandcodec_record_bytes);
+    const unsigned decoders = std::max(1u, bandcodec_decoder_count);
+    const unsigned records = (native_bytes + record_bytes - 1) / record_bytes;
+    const unsigned total_service = records * bandcodec_decoder_cycles_per_record;
+    return (total_service + decoders - 1) / decoders;
+  }
+
   /**
    * @brief Check if the config script is in SST mode
    *
@@ -401,6 +424,15 @@ class memory_config {
   bool m_perf_sim_memcpy;
   bool simple_dram_model;
   bool SST_mode;
+
+  unsigned bandcodec_enable;
+  unsigned long long bandcodec_weight_base;
+  unsigned long long bandcodec_weight_bytes;
+  unsigned bandcodec_compression_ratio;
+  unsigned bandcodec_record_bytes;
+  unsigned bandcodec_decoder_count;
+  unsigned bandcodec_decoder_cycles_per_record;
+
   gpgpu_context *gpgpu_ctx;
 };
 

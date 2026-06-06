@@ -236,7 +236,7 @@ dram_req_t::dram_req_t(class mem_fetch *mf, unsigned banks,
 
   row = tlx.row;
   col = tlx.col;
-  nbytes = mf->get_data_size();
+  nbytes = mf->get_bandcodec_dram_size();
 
   timestamp = m_gpu->gpu_tot_sim_cycle + m_gpu->gpu_sim_cycle;
   addr = mf->get_addr();
@@ -257,6 +257,7 @@ void dram_t::push(class mem_fetch *data) {
   mrqq->push(mrq);
 
   // stats...
+  m_stats->bandcodec_record_dram_access(data);
   n_req += 1;
   n_req_partial += 1;
   if (m_config->scheduler_type == DRAM_FRFCFS) {

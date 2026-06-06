@@ -44,6 +44,7 @@ class memory_stats_t {
   void memlatstat_read_done(class mem_fetch *mf);
   void memlatstat_dram_access(class mem_fetch *mf);
   void memlatstat_icnt2mem_pop(class mem_fetch *mf);
+  void bandcodec_record_dram_access(class mem_fetch *mf);
   void memlatstat_lat_pw();
   void memlatstat_print(unsigned n_mem, unsigned gpu_mem_n_bk);
 
@@ -118,6 +119,13 @@ class memory_stats_t {
                                            // id][bank id]
   unsigned int **max_servicetime2samerow;  // max_servicetime2samerow[dram chip
                                            // id][bank id]
+
+  // BandCodec stats
+  unsigned long long bandcodec_weight_requests;
+  unsigned long long bandcodec_weight_native_bytes;
+  unsigned long long bandcodec_weight_dram_bytes;
+  unsigned long long bandcodec_decoder_service_cycles;
+  unsigned long long bandcodec_non_weight_requests;
 
   // Power stats
   unsigned total_n_access;

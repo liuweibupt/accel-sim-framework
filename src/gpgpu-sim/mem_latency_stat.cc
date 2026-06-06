@@ -82,6 +82,11 @@ memory_stats_t::memory_stats_t(unsigned n_shader,
   m_n_shader = n_shader;
   m_memory_config = mem_config;
   m_gpu = gpu;
+  bandcodec_weight_requests = 0;
+  bandcodec_weight_native_bytes = 0;
+  bandcodec_weight_dram_bytes = 0;
+  bandcodec_decoder_service_cycles = 0;
+  bandcodec_non_weight_requests = 0;
   total_n_access = 0;
   total_n_reads = 0;
   total_n_writes = 0;
@@ -265,6 +270,18 @@ void memory_stats_t::memlatstat_icnt2mem_pop(mem_fetch *mf) {
   }
 }
 
+void memory_stats_t::bandcodec_record_dram_access(class mem_fetch *mf) {
+  if (!m_memory_config->bandcodec_enabled()) return;
+  if (mf->is_bandcodec_weight()) {
+    bandcodec_weight_requests++;
+    bandcodec_weight_native_bytes += mf->get_data_size();
+    bandcodec_weight_dram_bytes += mf->get_bandcodec_dram_size();
+    bandcodec_decoder_service_cycles += mf->get_bandcodec_decoder_delay();
+  } else {
+    bandcodec_non_weight_requests++;
+  }
+}
+
 void memory_stats_t::memlatstat_lat_pw() {
   if (mf_num_lat_pw && m_memory_config->gpgpu_memlatency_stat) {
     assert(mf_tot_lat_pw);
@@ -278,6 +295,14 @@ void memory_stats_t::memlatstat_lat_pw() {
 
 void memory_stats_t::memlatstat_print(unsigned n_mem, unsigned gpu_mem_n_bk) {
   unsigned i, j, k, l, m;
+
+  if (m_memory_config->bandcodec_enabled()) {
+    printf("bandcodec_weight_requests = %llu \n", bandcodec_weight_requests);
+    printf("bandcodec_weight_native_bytes = %llu \n", bandcodec_weight_native_bytes);
+    printf("bandcodec_weight_dram_bytes = %llu \n", bandcodec_weight_dram_bytes);
+    printf("bandcodec_decoder_service_cycles = %llu \n", bandcodec_decoder_service_cycles);
+    printf("bandcodec_non_weight_requests = %llu \n", bandcodec_non_weight_requests);
+  }
   unsigned max_bank_accesses, min_bank_accesses, max_chip_accesses,
       min_chip_accesses;
 

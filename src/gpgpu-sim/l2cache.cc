@@ -234,6 +234,21 @@ int memory_partition_unit::global_sub_partition_id_to_local_id(
 }
 
 void memory_partition_unit::simple_dram_model_cycle() {
+  if (!m_bandcodec_decode_queue.empty() &&
+      ((m_gpu->gpu_sim_cycle + m_gpu->gpu_tot_sim_cycle) >=
+       m_bandcodec_decode_queue.front().ready_cycle)) {
+    mem_fetch *mf_return = m_bandcodec_decode_queue.front().req;
+    unsigned dest_global_spid = mf_return->get_sub_partition_id();
+    int dest_spid = global_sub_partition_id_to_local_id(dest_global_spid);
+    assert(m_sub_partition[dest_spid]->get_id() == dest_global_spid);
+    if (!m_sub_partition[dest_spid]->dram_L2_queue_full()) {
+      m_sub_partition[dest_spid]->dram_L2_queue_push(mf_return);
+      mf_return->set_status(IN_PARTITION_DRAM_TO_L2_QUEUE,
+                            m_gpu->gpu_sim_cycle + m_gpu->gpu_tot_sim_cycle);
+      m_bandcodec_decode_queue.pop_front();
+    }
+  }
+
   // pop completed memory request from dram and push it to dram-to-L2 queue
   // of the original sub partition
   if (!m_dram_latency_queue.empty() &&
@@ -252,10 +267,18 @@ void memory_partition_unit::simple_dram_model_cycle() {
           m_sub_partition[dest_spid]->set_done(mf_return);
           delete mf_return;
         } else {
-          m_sub_partition[dest_spid]->dram_L2_queue_push(mf_return);
-          mf_return->set_status(
-              IN_PARTITION_DRAM_TO_L2_QUEUE,
-              m_gpu->gpu_sim_cycle + m_gpu->gpu_tot_sim_cycle);
+          if (mf_return->get_bandcodec_decoder_delay() > 0) {
+            bandcodec_decode_delay_t d;
+            d.req = mf_return;
+            d.ready_cycle = m_gpu->gpu_sim_cycle + m_gpu->gpu_tot_sim_cycle +
+                            mf_return->get_bandcodec_decoder_delay();
+            m_bandcodec_decode_queue.push_back(d);
+          } else {
+            m_sub_partition[dest_spid]->dram_L2_queue_push(mf_return);
+            mf_return->set_status(
+                IN_PARTITION_DRAM_TO_L2_QUEUE,
+                m_gpu->gpu_sim_cycle + m_gpu->gpu_tot_sim_cycle);
+          }
           m_arbitration_metadata.return_credit(dest_spid);
           MEMPART_DPRINTF(
               "mem_fetch request %p return from dram to sub partition %d\n",
@@ -304,6 +327,21 @@ void memory_partition_unit::simple_dram_model_cycle() {
 }
 
 void memory_partition_unit::dram_cycle() {
+  if (!m_bandcodec_decode_queue.empty() &&
+      ((m_gpu->gpu_sim_cycle + m_gpu->gpu_tot_sim_cycle) >=
+       m_bandcodec_decode_queue.front().ready_cycle)) {
+    mem_fetch *mf_return = m_bandcodec_decode_queue.front().req;
+    unsigned dest_global_spid = mf_return->get_sub_partition_id();
+    int dest_spid = global_sub_partition_id_to_local_id(dest_global_spid);
+    assert(m_sub_partition[dest_spid]->get_id() == dest_global_spid);
+    if (!m_sub_partition[dest_spid]->dram_L2_queue_full()) {
+      m_sub_partition[dest_spid]->dram_L2_queue_push(mf_return);
+      mf_return->set_status(IN_PARTITION_DRAM_TO_L2_QUEUE,
+                            m_gpu->gpu_sim_cycle + m_gpu->gpu_tot_sim_cycle);
+      m_bandcodec_decode_queue.pop_front();
+    }
+  }
+
   // pop completed memory request from dram and push it to dram-to-L2 queue
   // of the original sub partition
   mem_fetch *mf_return = m_dram->return_queue_top();
@@ -316,9 +354,17 @@ void memory_partition_unit::dram_cycle() {
         m_sub_partition[dest_spid]->set_done(mf_return);
         delete mf_return;
       } else {
-        m_sub_partition[dest_spid]->dram_L2_queue_push(mf_return);
-        mf_return->set_status(IN_PARTITION_DRAM_TO_L2_QUEUE,
-                              m_gpu->gpu_sim_cycle + m_gpu->gpu_tot_sim_cycle);
+        if (mf_return->get_bandcodec_decoder_delay() > 0) {
+          bandcodec_decode_delay_t d;
+          d.req = mf_return;
+          d.ready_cycle = m_gpu->gpu_sim_cycle + m_gpu->gpu_tot_sim_cycle +
+                          mf_return->get_bandcodec_decoder_delay();
+          m_bandcodec_decode_queue.push_back(d);
+        } else {
+          m_sub_partition[dest_spid]->dram_L2_queue_push(mf_return);
+          mf_return->set_status(IN_PARTITION_DRAM_TO_L2_QUEUE,
+                                m_gpu->gpu_sim_cycle + m_gpu->gpu_tot_sim_cycle);
+        }
         m_arbitration_metadata.return_credit(dest_spid);
         MEMPART_DPRINTF(
             "mem_fetch request %p return from dram to sub partition %d\n",
