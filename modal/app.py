@@ -27,6 +27,18 @@ _REPLAY_WITH_ACCELSIM_SCRIPT = _MODAL_ROOT / "scripts" / "replay_with_accelsim.s
 _ARTIFACT_VOLUME_NAME = "accelsim-cutlass-traces"
 _ARTIFACTS_ROOT = _MODAL_ROOT / "artifacts"
 
+
+def _prepare_artifact_download_destination(artifacts_root: Path, job_name: str) -> Path:
+    local_dest = artifacts_root / job_name
+    local_dest.parent.mkdir(parents=True, exist_ok=True)
+    if local_dest.exists():
+        if local_dest.is_dir():
+            shutil.rmtree(local_dest)
+        else:
+            local_dest.unlink()
+    return local_dest
+
+
 image = (
     modal.Image.from_registry("nvidia/cuda:12.8.1-devel-ubuntu24.04", add_python="3.12")
     .apt_install(
@@ -231,8 +243,7 @@ def main(
     if skip_download:
         return
 
-    local_dest = _ARTIFACTS_ROOT / result["job_name"]
-    local_dest.parent.mkdir(parents=True, exist_ok=True)
+    local_dest = _prepare_artifact_download_destination(_ARTIFACTS_ROOT, result["job_name"])
     subprocess.run(
         [
             sys.executable,
