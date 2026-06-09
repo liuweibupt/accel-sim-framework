@@ -24,6 +24,8 @@ WEIGHT_BASE=${WEIGHT_BASE:-0x00002ae461000000}
 WEIGHT_BYTES=${WEIGHT_BYTES:-301989888}
 WEIGHT_BYTES_HEX=${WEIGHT_BYTES_HEX:-0x12000000}
 COMPRESSION_RATIO=${COMPRESSION_RATIO:-4}
+BANDCODEC_BPW_NUM=${BANDCODEC_BPW_NUM:-0}
+BANDCODEC_BPW_DEN=${BANDCODEC_BPW_DEN:-1}
 DECODER_COUNT=${DECODER_COUNT:-100}
 DECODER_CYCLES_PER_RECORD=${DECODER_CYCLES_PER_RECORD:-4}
 RECORD_BYTES=${RECORD_BYTES:-256}
@@ -61,6 +63,8 @@ weight_bytes=$WEIGHT_BYTES
 weight_bytes_hex=$WEIGHT_BYTES_HEX
 weight_range_method=B-matrix base inferred from large CUTLASS trace LDGSTS address stream; size=N*K*2 for 12288x12288 FP16.
 compression_ratio=$COMPRESSION_RATIO
+bandcodec_bpw_num=$BANDCODEC_BPW_NUM
+bandcodec_bpw_den=$BANDCODEC_BPW_DEN
 decoder_count=$DECODER_COUNT
 decoder_cycles_per_record=$DECODER_CYCLES_PER_RECORD
 record_bytes=$RECORD_BYTES
@@ -78,6 +82,8 @@ stdbuf -oL -eL "$BIN" \
   -gpgpu_bandcodec_weight_base "$WEIGHT_BASE" \
   -gpgpu_bandcodec_weight_bytes "$WEIGHT_BYTES" \
   -gpgpu_bandcodec_compression_ratio "$COMPRESSION_RATIO" \
+  -gpgpu_bandcodec_bpw_num "$BANDCODEC_BPW_NUM" \
+  -gpgpu_bandcodec_bpw_den "$BANDCODEC_BPW_DEN" \
   -gpgpu_bandcodec_record_bytes "$RECORD_BYTES" \
   -gpgpu_bandcodec_decoder_count "$DECODER_COUNT" \
   -gpgpu_bandcodec_decoder_cycles_per_record "$DECODER_CYCLES_PER_RECORD" \
