@@ -126,6 +126,10 @@ class memory_stats_t {
   unsigned long long bandcodec_weight_dram_bytes;
   unsigned long long bandcodec_decoder_service_cycles;
   unsigned long long bandcodec_non_weight_requests;
+  unsigned long long bandcodec_decode_queue_enqueues;
+  unsigned long long bandcodec_decode_queue_blocked_cycles;
+  unsigned long long bandcodec_decode_queue_max_depth;
+  unsigned long long bandcodec_dram_to_l2_blocked_cycles;
 
   // Power stats
   unsigned total_n_access;

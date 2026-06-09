@@ -324,8 +324,24 @@ class memory_config {
     const unsigned long long end = start + bandcodec_weight_bytes;
     return addr >= start && addr < end;
   }
-  unsigned bandcodec_compressed_size(unsigned native_bytes) const {
+  unsigned bandcodec_compressed_size(new_addr_type addr,
+                                     unsigned native_bytes) const {
     if (!bandcodec_enabled()) return native_bytes;
+    if (bandcodec_bpw_num != 0) {
+      const unsigned long long offset =
+          addr > bandcodec_weight_base ? addr - bandcodec_weight_base : 0;
+      const unsigned long long end = offset + native_bytes;
+      const unsigned long long denom =
+          16ull * std::max(1u, bandcodec_bpw_den);
+      const auto compressed_boundary = [this, denom](unsigned long long pos) {
+        const unsigned long long scaled =
+            pos * static_cast<unsigned long long>(bandcodec_bpw_num);
+        return (scaled + denom - 1) / denom;
+      };
+      const unsigned long long compressed_bytes =
+          compressed_boundary(end) - compressed_boundary(offset);
+      return static_cast<unsigned>(std::max(1ull, compressed_bytes));
+    }
     const unsigned ratio = std::max(1u, bandcodec_compression_ratio);
     return std::max(1u, (native_bytes + ratio - 1) / ratio);
   }
@@ -429,6 +445,8 @@ class memory_config {
   unsigned long long bandcodec_weight_base;
   unsigned long long bandcodec_weight_bytes;
   unsigned bandcodec_compression_ratio;
+  unsigned bandcodec_bpw_num;
+  unsigned bandcodec_bpw_den;
   unsigned bandcodec_record_bytes;
   unsigned bandcodec_decoder_count;
   unsigned bandcodec_decoder_cycles_per_record;

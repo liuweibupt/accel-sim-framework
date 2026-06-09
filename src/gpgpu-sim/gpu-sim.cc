@@ -335,6 +335,15 @@ void memory_config::reg_options(class OptionParser *opp) {
   option_parser_register(opp, "-gpgpu_bandcodec_compression_ratio", OPT_UINT32,
                          &bandcodec_compression_ratio,
                          "BandCodec memory-service compression ratio", "4");
+  option_parser_register(opp, "-gpgpu_bandcodec_bpw_num", OPT_UINT32,
+                         &bandcodec_bpw_num,
+                         "BandCodec memory-service bits-per-weight numerator; "
+                         "0 uses compression-ratio mode",
+                         "0");
+  option_parser_register(opp, "-gpgpu_bandcodec_bpw_den", OPT_UINT32,
+                         &bandcodec_bpw_den,
+                         "BandCodec memory-service bits-per-weight denominator",
+                         "1");
   option_parser_register(opp, "-gpgpu_bandcodec_record_bytes", OPT_UINT32,
                          &bandcodec_record_bytes,
                          "native bytes per BandCodec decoder record", "256");

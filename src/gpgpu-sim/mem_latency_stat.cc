@@ -87,6 +87,10 @@ memory_stats_t::memory_stats_t(unsigned n_shader,
   bandcodec_weight_dram_bytes = 0;
   bandcodec_decoder_service_cycles = 0;
   bandcodec_non_weight_requests = 0;
+  bandcodec_decode_queue_enqueues = 0;
+  bandcodec_decode_queue_blocked_cycles = 0;
+  bandcodec_decode_queue_max_depth = 0;
+  bandcodec_dram_to_l2_blocked_cycles = 0;
   total_n_access = 0;
   total_n_reads = 0;
   total_n_writes = 0;
@@ -302,6 +306,10 @@ void memory_stats_t::memlatstat_print(unsigned n_mem, unsigned gpu_mem_n_bk) {
     printf("bandcodec_weight_dram_bytes = %llu \n", bandcodec_weight_dram_bytes);
     printf("bandcodec_decoder_service_cycles = %llu \n", bandcodec_decoder_service_cycles);
     printf("bandcodec_non_weight_requests = %llu \n", bandcodec_non_weight_requests);
+    printf("bandcodec_decode_queue_enqueues = %llu \n", bandcodec_decode_queue_enqueues);
+    printf("bandcodec_decode_queue_blocked_cycles = %llu \n", bandcodec_decode_queue_blocked_cycles);
+    printf("bandcodec_decode_queue_max_depth = %llu \n", bandcodec_decode_queue_max_depth);
+    printf("bandcodec_dram_to_l2_blocked_cycles = %llu \n", bandcodec_dram_to_l2_blocked_cycles);
   }
   unsigned max_bank_accesses, min_bank_accesses, max_chip_accesses,
       min_chip_accesses;

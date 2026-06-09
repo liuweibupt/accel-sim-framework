@@ -246,6 +246,8 @@ void memory_partition_unit::simple_dram_model_cycle() {
       mf_return->set_status(IN_PARTITION_DRAM_TO_L2_QUEUE,
                             m_gpu->gpu_sim_cycle + m_gpu->gpu_tot_sim_cycle);
       m_bandcodec_decode_queue.pop_front();
+    } else {
+      m_stats->bandcodec_decode_queue_blocked_cycles++;
     }
   }
 
@@ -273,6 +275,12 @@ void memory_partition_unit::simple_dram_model_cycle() {
             d.ready_cycle = m_gpu->gpu_sim_cycle + m_gpu->gpu_tot_sim_cycle +
                             mf_return->get_bandcodec_decoder_delay();
             m_bandcodec_decode_queue.push_back(d);
+            m_stats->bandcodec_decode_queue_enqueues++;
+            if (m_bandcodec_decode_queue.size() >
+                m_stats->bandcodec_decode_queue_max_depth) {
+              m_stats->bandcodec_decode_queue_max_depth =
+                  m_bandcodec_decode_queue.size();
+            }
           } else {
             m_sub_partition[dest_spid]->dram_L2_queue_push(mf_return);
             mf_return->set_status(
@@ -285,6 +293,8 @@ void memory_partition_unit::simple_dram_model_cycle() {
               mf_return, dest_spid);
         }
         m_dram_latency_queue.pop_front();
+      } else {
+        m_stats->bandcodec_dram_to_l2_blocked_cycles++;
       }
 
     } else {
@@ -339,6 +349,8 @@ void memory_partition_unit::dram_cycle() {
       mf_return->set_status(IN_PARTITION_DRAM_TO_L2_QUEUE,
                             m_gpu->gpu_sim_cycle + m_gpu->gpu_tot_sim_cycle);
       m_bandcodec_decode_queue.pop_front();
+    } else {
+      m_stats->bandcodec_decode_queue_blocked_cycles++;
     }
   }
 
@@ -360,6 +372,12 @@ void memory_partition_unit::dram_cycle() {
           d.ready_cycle = m_gpu->gpu_sim_cycle + m_gpu->gpu_tot_sim_cycle +
                           mf_return->get_bandcodec_decoder_delay();
           m_bandcodec_decode_queue.push_back(d);
+          m_stats->bandcodec_decode_queue_enqueues++;
+          if (m_bandcodec_decode_queue.size() >
+              m_stats->bandcodec_decode_queue_max_depth) {
+            m_stats->bandcodec_decode_queue_max_depth =
+                m_bandcodec_decode_queue.size();
+          }
         } else {
           m_sub_partition[dest_spid]->dram_L2_queue_push(mf_return);
           mf_return->set_status(IN_PARTITION_DRAM_TO_L2_QUEUE,
@@ -371,6 +389,8 @@ void memory_partition_unit::dram_cycle() {
             mf_return, dest_spid);
       }
       m_dram->return_queue_pop();
+    } else {
+      m_stats->bandcodec_dram_to_l2_blocked_cycles++;
     }
   } else {
     m_dram->return_queue_pop();

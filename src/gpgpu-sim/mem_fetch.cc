@@ -55,11 +55,13 @@ mem_fetch::mem_fetch(const mem_access_t &access, const warp_inst_t *inst,
   m_bandcodec_decoder_delay = 0;
   if (m_original_mf && m_original_mf->is_bandcodec_weight()) {
     m_bandcodec_weight = true;
-    m_bandcodec_dram_size = config->bandcodec_compressed_size(m_data_size);
+    m_bandcodec_dram_size =
+        config->bandcodec_compressed_size(access.get_addr(), m_data_size);
     m_bandcodec_decoder_delay = config->bandcodec_decoder_delay(m_data_size);
   } else if (!access.is_write() && config->bandcodec_in_weight_range(access.get_addr())) {
     m_bandcodec_weight = true;
-    m_bandcodec_dram_size = config->bandcodec_compressed_size(m_data_size);
+    m_bandcodec_dram_size =
+        config->bandcodec_compressed_size(access.get_addr(), m_data_size);
     m_bandcodec_decoder_delay = config->bandcodec_decoder_delay(m_data_size);
   }
   m_ctrl_size = ctrl_size;
