@@ -39,6 +39,76 @@ def _prepare_artifact_download_destination(artifacts_root: Path, job_name: str) 
     return local_dest
 
 
+_COPY_IGNORED_DIRS = {"build", "__pycache__"}
+_A100_EPHEMERAL_DISK_MIB = 524288
+_NCU_METRICS = (
+    "dram__bytes_read.sum",
+    "dram__bytes_write.sum",
+    "gpu__time_duration.sum",
+    "lts__t_sectors_srcunit_tex_op_read.sum",
+    "lts__t_sectors_srcunit_tex_op_write.sum",
+)
+_NCU_RUNNERS = {
+    "cutlass": Path("/root/project/modal/cutlass_runner/build/cutlass_runner"),
+    "cublaslt": Path("/root/project/modal/cublaslt_runner/build/cublaslt_runner"),
+}
+
+
+def _ignore_modal_copy_path(path: Path) -> bool:
+    return any(part in _COPY_IGNORED_DIRS for part in path.parts)
+
+
+def _build_ncu_command(dtype: str, m: int, n: int, k: int, runner_kind: str) -> tuple[list[str], Path]:
+    binary = _NCU_RUNNERS.get(runner_kind)
+    if binary is None:
+        raise ValueError("runner_kind must be cutlass or cublaslt for Nsight Compute collection")
+    cmd = [
+        "ncu",
+        "--target-processes",
+        "all",
+        "--csv",
+        "--metrics",
+        ",".join(_NCU_METRICS),
+        str(binary),
+        "--dtype",
+        dtype,
+        "--m",
+        str(m),
+        "--n",
+        str(n),
+        "--k",
+        str(k),
+    ]
+    return cmd, binary
+
+
+def _read_tail(path: Path, max_chars: int = 4000) -> str:
+    if not path.exists():
+        return ""
+    text = path.read_text(encoding="utf-8", errors="ignore")
+    return text[-max_chars:]
+
+
+def _raise_for_ncu_failure(returncode: int, stderr_path: Path) -> None:
+    if returncode == 0:
+        return
+    stderr_tail = _read_tail(stderr_path)
+    raise RuntimeError(f"ncu failed with rc={returncode}; stderr tail:\n{stderr_tail}")
+
+
+def _build_gpu_diagnostic_command() -> list[str]:
+    return [
+        "bash",
+        "-lc",
+        "set -x; "
+        "nvidia-smi; "
+        "nvidia-smi -q | sed -n '1,220p'; "
+        "ncu --version; "
+        "ldconfig -p | grep -E 'libcuda|libnvidia-ml|libcupti|libnvidia-.*perf' || true; "
+        "find /usr/local -maxdepth 5 -name 'libcupti.so*' -o -name 'libnvidia-ml.so*' -o -name 'libcuda.so*' | sort",
+    ]
+
+
 image = (
     modal.Image.from_registry("nvidia/cuda:12.8.1-devel-ubuntu24.04", add_python="3.12")
     .apt_install(
@@ -50,10 +120,30 @@ image = (
         "bc",
     )
     .add_local_dir(str(_MODAL_ROOT / "scripts"), remote_path="/root/project/modal/scripts", copy=True)
-    .add_local_dir(str(_MODAL_ROOT / "cutlass_runner"), remote_path="/root/project/modal/cutlass_runner", copy=True)
-    .add_local_dir(str(_MODAL_ROOT / "cublaslt_runner"), remote_path="/root/project/modal/cublaslt_runner", copy=True)
-    .add_local_dir(str(_MODAL_ROOT / "agent_kv_runner"), remote_path="/root/project/modal/agent_kv_runner", copy=True)
-    .add_local_dir(str(_MODAL_ROOT / "deepseek_v4_runner"), remote_path="/root/project/modal/deepseek_v4_runner", copy=True)
+    .add_local_dir(
+        str(_MODAL_ROOT / "cutlass_runner"),
+        remote_path="/root/project/modal/cutlass_runner",
+        copy=True,
+        ignore=_ignore_modal_copy_path,
+    )
+    .add_local_dir(
+        str(_MODAL_ROOT / "cublaslt_runner"),
+        remote_path="/root/project/modal/cublaslt_runner",
+        copy=True,
+        ignore=_ignore_modal_copy_path,
+    )
+    .add_local_dir(
+        str(_MODAL_ROOT / "agent_kv_runner"),
+        remote_path="/root/project/modal/agent_kv_runner",
+        copy=True,
+        ignore=_ignore_modal_copy_path,
+    )
+    .add_local_dir(
+        str(_MODAL_ROOT / "deepseek_v4_runner"),
+        remote_path="/root/project/modal/deepseek_v4_runner",
+        copy=True,
+        ignore=_ignore_modal_copy_path,
+    )
     .add_local_dir(str(_REPO_ROOT / "util" / "tracer_nvbit"), remote_path="/root/project/util/tracer_nvbit", copy=True)
     .run_commands(
         "cd /root/project && bash modal/scripts/fetch_cutlass.sh",
@@ -111,7 +201,7 @@ def validate_environment() -> dict[str, object]:
     cpu=8,
     memory=32768,
     timeout=60 * 60 * 4,
-    ephemeral_disk=524288,
+    ephemeral_disk=_A100_EPHEMERAL_DISK_MIB,
     volumes={"/artifacts": trace_volume},
 )
 def run_trace(
@@ -213,6 +303,79 @@ def run_trace(
         "remote_artifact_root": str(trace_root),
         "remote_trace_dir": str(trace_dir),
         "files": files,
+    }
+
+
+@app.function(
+    image=image,
+    gpu="A100-80GB",
+    cpu=8,
+    memory=32768,
+    timeout=60 * 60,
+    ephemeral_disk=_A100_EPHEMERAL_DISK_MIB,
+    volumes={"/artifacts": trace_volume},
+)
+def run_ncu_gemm(
+    dtype: str = "fp16",
+    m: int = 512,
+    n: int = 512,
+    k: int = 512,
+    job_name: str = "",
+    runner_kind: str = "cutlass",
+) -> dict[str, object]:
+    _validate_shape(m, n, k, runner_kind=runner_kind)
+    if dtype not in {"fp16", "bf16"}:
+        raise ValueError("dtype must be fp16 or bf16")
+    cmd, binary = _build_ncu_command(dtype, m, n, k, runner_kind)
+    if not binary.exists():
+        raise FileNotFoundError(binary)
+    if shutil.which("ncu") is None:
+        raise FileNotFoundError("ncu")
+    if not job_name:
+        job_name = f"ncu-{runner_kind}-{dtype}-{m}x{n}x{k}-{int(time.time())}"
+
+    out_dir = Path("/artifacts") / job_name
+    out_dir.mkdir(parents=True, exist_ok=True)
+    stdout_path = out_dir / "ncu.csv"
+    stderr_path = out_dir / "ncu.stderr"
+    with stdout_path.open("w", encoding="utf-8") as stdout, stderr_path.open("w", encoding="utf-8") as stderr:
+        completed = subprocess.run(cmd, cwd="/root/project", stdout=stdout, stderr=stderr, text=True, check=False)
+    trace_volume.commit()
+    _raise_for_ncu_failure(completed.returncode, stderr_path)
+    return {
+        "job_name": job_name,
+        "dtype": dtype,
+        "shape": [m, n, k],
+        "runner_kind": runner_kind,
+        "gpu": "A100-80GB",
+        "artifact_volume": _ARTIFACT_VOLUME_NAME,
+        "remote_artifact_root": str(out_dir),
+        "stdout": str(stdout_path),
+        "stderr": str(stderr_path),
+        "metrics": list(_NCU_METRICS),
+    }
+
+
+@app.function(
+    image=image,
+    gpu="A100-80GB",
+    cpu=2,
+    memory=8192,
+    timeout=15 * 60,
+    ephemeral_disk=_A100_EPHEMERAL_DISK_MIB,
+)
+def gpu_diagnostics() -> dict[str, object]:
+    completed = subprocess.run(
+        _build_gpu_diagnostic_command(),
+        cwd="/root/project",
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    return {
+        "returncode": completed.returncode,
+        "stdout": completed.stdout[-12000:],
+        "stderr": completed.stderr[-12000:],
     }
 
 
