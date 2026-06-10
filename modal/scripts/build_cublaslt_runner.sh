@@ -17,6 +17,10 @@ if [[ ! -x "${CUDA_HOME:-}/bin/nvcc" ]] && command -v nvcc >/dev/null 2>&1; then
   export CUDAToolkit_ROOT="${CUDA_HOME}"
 fi
 
+if [[ -x "${CUDA_HOME:-}/bin/nvcc" ]]; then
+  export CUDAToolkit_ROOT="${CUDAToolkit_ROOT:-${CUDA_HOME}}"
+fi
+
 if [[ ! -x "${CUDA_HOME:-}/bin/nvcc" ]]; then
   echo "[build_cublaslt_runner] ERROR: nvcc not found (looked in /usr/local/cuda-12.8 and PATH)" >&2
   exit 1

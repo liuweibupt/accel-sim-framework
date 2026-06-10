@@ -11,6 +11,11 @@
 
 namespace {
 
+constexpr int kLlama31M = 2048;
+constexpr int kLlamaHidden = 4096;
+constexpr int kLlamaKvDim = 1024;
+constexpr int kLlamaIntermediate = 14336;
+
 void CheckCuda(cudaError_t result, char const* expr) {
   if (result != cudaSuccess) {
     std::cerr << "CUDA error for " << expr << ": " << cudaGetErrorString(result) << "\n";
@@ -43,6 +48,25 @@ bool ParseDataType(std::string const& arg, DataType* dtype) {
     return true;
   }
   return false;
+}
+
+bool IsSupportedShape(int m, int n, int k) {
+  if (m == 2048 && n == 12288 && k == 12288) {
+    return true;
+  }
+  if (m != kLlama31M) {
+    return false;
+  }
+  return (n == kLlamaHidden && k == kLlamaHidden) ||
+         (n == kLlamaKvDim && k == kLlamaHidden) ||
+         (n == kLlamaIntermediate && k == kLlamaHidden) ||
+         (n == kLlamaHidden && k == kLlamaIntermediate);
+}
+
+char const* SupportedShapeMessage() {
+  return "Supported shapes: GPT-style 2048x12288x12288 and LLaMA-3.1 projection "
+         "shapes 2048x4096x4096, 2048x1024x4096, 2048x14336x4096, "
+         "2048x4096x14336.";
 }
 
 template <typename T>
@@ -188,7 +212,8 @@ int main(int argc, char** argv) {
       k = std::stoi(argv[++i]);
     } else if (arg == "--help") {
       std::cout << "Usage: cublaslt_runner [--dtype fp16|bf16] [--m M] [--n N] [--k K]\n";
-      std::cout << "Example: cublaslt_runner --dtype bf16 --m 2048 --n 12288 --k 12288\n";
+      std::cout << "Example: cublaslt_runner --dtype bf16 --m 2048 --n 4096 --k 4096\n";
+      std::cout << SupportedShapeMessage() << "\n";
       return EXIT_SUCCESS;
     } else {
       std::cerr << "Unknown argument: " << arg << "\n";
@@ -201,8 +226,8 @@ int main(int argc, char** argv) {
     return EXIT_FAILURE;
   }
 
-  if (!(m == 2048 && n == 12288 && k == 12288)) {
-    std::cerr << "Supported shape is 2048x12288x12288 for GPT-3-style tracing.\n";
+  if (!IsSupportedShape(m, n, k)) {
+    std::cerr << SupportedShapeMessage() << "\n";
     return EXIT_FAILURE;
   }
 
