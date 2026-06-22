@@ -966,6 +966,8 @@ class tag_array {
   void fill(unsigned idx, unsigned time, mem_fetch *mf);
   void fill(new_addr_type addr, unsigned time, mem_access_sector_mask_t mask,
             mem_access_byte_mask_t byte_mask, bool is_write);
+  void fill(unsigned idx, unsigned time, mem_access_sector_mask_t mask,
+            mem_access_byte_mask_t byte_mask);
 
   unsigned size() const { return m_config.get_num_lines(); }
   cache_block_t *get_block(unsigned idx) { return m_lines[idx]; }
@@ -1400,14 +1402,19 @@ class baseline_cache : public cache_t {
   gpgpu_sim *m_gpu;
 
   struct extra_mf_fields {
-    extra_mf_fields() { m_valid = false; }
+    extra_mf_fields() {
+      m_valid = false;
+      m_bandcodec_line_fill = false;
+    }
     extra_mf_fields(new_addr_type a, new_addr_type ad, unsigned i, unsigned d,
-                    const cache_config &m_config) {
+                    const cache_config &m_config,
+                    bool bandcodec_line_fill = false) {
       m_valid = true;
       m_block_addr = a;
       m_addr = ad;
       m_cache_index = i;
       m_data_size = d;
+      m_bandcodec_line_fill = bandcodec_line_fill;
       pending_read = m_config.m_mshr_type == SECTOR_ASSOC
                          ? m_config.m_line_sz / SECTOR_SIZE
                          : 0;
@@ -1417,6 +1424,7 @@ class baseline_cache : public cache_t {
     new_addr_type m_addr;
     unsigned m_cache_index;
     unsigned m_data_size;
+    bool m_bandcodec_line_fill;
     // this variable is used when a load request generates multiple load
     // transactions For example, a read request from non-sector L1 request sends
     // a request to sector L2

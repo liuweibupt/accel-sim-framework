@@ -94,6 +94,17 @@ mem_fetch::mem_fetch(const mem_access_t &access, const warp_inst_t *inst,
 
 mem_fetch::~mem_fetch() { m_status = MEM_FETCH_DELETED; }
 
+void mem_fetch::set_data_size(unsigned size) {
+  m_data_size = size;
+  if (m_bandcodec_weight && m_mem_config) {
+    m_bandcodec_dram_size =
+        m_mem_config->bandcodec_compressed_size(m_access.get_addr(),
+                                                m_data_size);
+    m_bandcodec_decoder_delay =
+        m_mem_config->bandcodec_decoder_delay(m_data_size);
+  }
+}
+
 #define MF_TUP_BEGIN(X) static const char *Status_str[] = {
 #define MF_TUP(X) #X
 #define MF_TUP_END(X) \

@@ -82,7 +82,7 @@ class mem_fetch {
     m_raw_addr.sub_partition = sub_partition_id;
   }
   unsigned get_data_size() const { return m_data_size; }
-  void set_data_size(unsigned size) { m_data_size = size; }
+  void set_data_size(unsigned size);
   bool is_bandcodec_weight() const { return m_bandcodec_weight; }
   unsigned get_bandcodec_dram_size() const { return m_bandcodec_dram_size; }
   unsigned get_bandcodec_decoder_delay() const { return m_bandcodec_decoder_delay; }

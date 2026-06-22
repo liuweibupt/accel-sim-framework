@@ -436,14 +436,19 @@ void tag_array::fill(new_addr_type addr, unsigned time,
   }
 }
 
-void tag_array::fill(unsigned index, unsigned time, mem_fetch *mf) {
+void tag_array::fill(unsigned index, unsigned time,
+                     mem_access_sector_mask_t mask,
+                     mem_access_byte_mask_t byte_mask) {
   assert(m_config.m_alloc_policy == ON_MISS);
   bool before = m_lines[index]->is_modified_line();
-  m_lines[index]->fill(time, mf->get_access_sector_mask(),
-                       mf->get_access_byte_mask());
+  m_lines[index]->fill(time, mask, byte_mask);
   if (m_lines[index]->is_modified_line() && !before) {
     m_dirty++;
   }
+}
+
+void tag_array::fill(unsigned index, unsigned time, mem_fetch *mf) {
+  fill(index, time, mf->get_access_sector_mask(), mf->get_access_byte_mask());
 }
 
 // TODO: we need write back the flushed data to the upper level
@@ -1234,6 +1239,31 @@ void baseline_cache::fill(mem_fetch *mf, unsigned time) {
     extra_mf_fields_lookup::iterator e =
         m_extra_mf_fields.find(mf->get_original_mf());
     assert(e != m_extra_mf_fields.end());
+    if (e->second.m_bandcodec_line_fill) {
+      mf->set_data_size(e->second.m_data_size);
+      mf->set_addr(e->second.m_addr);
+      if (m_config.m_alloc_policy == ON_MISS) {
+        for (unsigned s = 0; s < SECTOR_CHUNCK_SIZE; ++s) {
+          mem_access_sector_mask_t mask;
+          mask.set(s);
+          m_tag_array->fill(e->second.m_cache_index, time, mask,
+                            mf->get_access_byte_mask());
+        }
+      } else if (m_config.m_alloc_policy == ON_FILL) {
+        m_tag_array->fill(e->second.m_block_addr, time, mf, mf->is_write());
+      } else {
+        abort();
+      }
+
+      bool has_atomic = false;
+      m_mshrs.mark_ready(e->second.m_block_addr, has_atomic);
+      assert(!has_atomic);
+      m_extra_mf_fields.erase(mf->get_original_mf());
+      m_bandwidth_management.use_fill_port(mf);
+      delete mf;
+      return;
+    }
+
     e->second.pending_read--;
 
     if (e->second.pending_read > 0) {
@@ -1250,6 +1280,28 @@ void baseline_cache::fill(mem_fetch *mf, unsigned time) {
   extra_mf_fields_lookup::iterator e = m_extra_mf_fields.find(mf);
   assert(e != m_extra_mf_fields.end());
   assert(e->second.m_valid);
+  if (e->second.m_bandcodec_line_fill) {
+    mf->set_data_size(e->second.m_data_size);
+    mf->set_addr(e->second.m_addr);
+    if (m_config.m_alloc_policy == ON_MISS) {
+      for (unsigned s = 0; s < SECTOR_CHUNCK_SIZE; ++s) {
+        mem_access_sector_mask_t mask;
+        mask.set(s);
+        m_tag_array->fill(e->second.m_cache_index, time, mask,
+                          mf->get_access_byte_mask());
+      }
+    } else if (m_config.m_alloc_policy == ON_FILL) {
+      m_tag_array->fill(e->second.m_block_addr, time, mf, mf->is_write());
+    } else {
+      abort();
+    }
+    bool has_atomic = false;
+    m_mshrs.mark_ready(e->second.m_block_addr, has_atomic);
+    assert(!has_atomic);
+    m_extra_mf_fields.erase(mf);
+    m_bandwidth_management.use_fill_port(mf);
+    return;
+  }
   mf->set_data_size(e->second.m_data_size);
   mf->set_addr(e->second.m_addr);
   if (m_config.m_alloc_policy == ON_MISS)
@@ -1358,7 +1410,14 @@ void baseline_cache::send_read_request(new_addr_type addr,
                                        evicted_block_info &evicted,
                                        std::list<cache_event> &events,
                                        bool read_only, bool wa) {
-  new_addr_type mshr_addr = m_config.mshr_addr(mf->get_addr());
+  const bool bandcodec_line_fill =
+      (m_level == L2_GPU_CACHE) && mf->is_bandcodec_weight() &&
+      !mf->get_is_write() &&
+      m_config.m_cache_type == SECTOR &&
+      m_config.get_line_sz() > m_config.get_atom_sz();
+  const new_addr_type mshr_addr =
+      bandcodec_line_fill ? m_config.block_addr(mf->get_addr())
+                          : m_config.mshr_addr(mf->get_addr());
   bool mshr_hit = m_mshrs.probe(mshr_addr);
   bool mshr_avail = !m_mshrs.full(mshr_addr);
   if (mshr_hit && mshr_avail) {
@@ -1380,8 +1439,10 @@ void baseline_cache::send_read_request(new_addr_type addr,
 
     m_mshrs.add(mshr_addr, mf);
     m_extra_mf_fields[mf] = extra_mf_fields(
-        mshr_addr, mf->get_addr(), cache_index, mf->get_data_size(), m_config);
-    mf->set_data_size(m_config.get_atom_sz());
+        mshr_addr, mf->get_addr(), cache_index, mf->get_data_size(), m_config,
+        bandcodec_line_fill);
+    mf->set_data_size(bandcodec_line_fill ? m_config.get_line_sz()
+                                          : m_config.get_atom_sz());
     mf->set_addr(mshr_addr);
     m_miss_queue.push_back(mf);
     mf->set_status(m_miss_queue_status, time);
