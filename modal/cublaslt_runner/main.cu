@@ -51,10 +51,10 @@ bool ParseDataType(std::string const& arg, DataType* dtype) {
 }
 
 bool IsSupportedShape(int m, int n, int k) {
-  if (m == 2048 && n == 12288 && k == 12288) {
+  if ((m == 1 || m == 2048) && n == 12288 && k == 12288) {
     return true;
   }
-  if (m != kLlama31M) {
+  if (m != 1 && m != kLlama31M) {
     return false;
   }
   return (n == kLlamaHidden && k == kLlamaHidden) ||
@@ -64,9 +64,9 @@ bool IsSupportedShape(int m, int n, int k) {
 }
 
 char const* SupportedShapeMessage() {
-  return "Supported shapes: GPT-style 2048x12288x12288 and LLaMA-3.1 projection "
-         "shapes 2048x4096x4096, 2048x1024x4096, 2048x14336x4096, "
-         "2048x4096x14336.";
+  return "Supported shapes: GPT-style Mx12288x12288 with M in {1,2048} and "
+         "LLaMA-3.1 projection shapes Mx4096x4096, Mx1024x4096, "
+         "Mx14336x4096, Mx4096x14336 with M in {1,2048}.";
 }
 
 template <typename T>

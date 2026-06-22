@@ -166,11 +166,16 @@ def _validate_shape(m: int, n: int, k: int, runner_kind: str) -> None:
     elif runner_kind == "cublaslt":
         allowed = {
             (2048, 12288, 12288),
+            (1, 12288, 12288),
             # LLaMA-3.1-8B-Instruct projection shapes: q/o, k/v, gate/up, down.
             (2048, 4096, 4096),
             (2048, 1024, 4096),
             (2048, 14336, 4096),
             (2048, 4096, 14336),
+            (1, 4096, 4096),
+            (1, 1024, 4096),
+            (1, 14336, 4096),
+            (1, 4096, 14336),
         }
     else:
         raise ValueError("runner_kind must be cutlass, cublaslt, agent_kv, or deepseek_v4")
