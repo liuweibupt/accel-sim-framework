@@ -12,9 +12,11 @@
 namespace {
 
 constexpr int kLlama31M = 2048;
+constexpr int kSmallBatchMs[] = {1, 2, 4, 8};
 constexpr int kLlamaHidden = 4096;
 constexpr int kLlamaKvDim = 1024;
 constexpr int kLlamaIntermediate = 14336;
+constexpr int kQwen3Intermediate = 12288;
 
 void CheckCuda(cudaError_t result, char const* expr) {
   if (result != cudaSuccess) {
@@ -50,23 +52,37 @@ bool ParseDataType(std::string const& arg, DataType* dtype) {
   return false;
 }
 
+bool IsSmallBatchM(int m) {
+  for (int supported_m : kSmallBatchMs) {
+    if (m == supported_m) {
+      return true;
+    }
+  }
+  return false;
+}
+
+bool IsSupportedM(int m) { return IsSmallBatchM(m) || m == kLlama31M; }
+
 bool IsSupportedShape(int m, int n, int k) {
-  if ((m == 1 || m == 2048) && n == 12288 && k == 12288) {
+  if (IsSupportedM(m) && n == 12288 && k == 12288) {
     return true;
   }
-  if (m != 1 && m != kLlama31M) {
+  if (!IsSupportedM(m)) {
     return false;
   }
   return (n == kLlamaHidden && k == kLlamaHidden) ||
          (n == kLlamaKvDim && k == kLlamaHidden) ||
          (n == kLlamaIntermediate && k == kLlamaHidden) ||
-         (n == kLlamaHidden && k == kLlamaIntermediate);
+         (n == kLlamaHidden && k == kLlamaIntermediate) ||
+         (n == kQwen3Intermediate && k == kLlamaHidden) ||
+         (n == kLlamaHidden && k == kQwen3Intermediate);
 }
 
 char const* SupportedShapeMessage() {
-  return "Supported shapes: GPT-style Mx12288x12288 with M in {1,2048} and "
+  return "Supported shapes: GPT-style Mx12288x12288 with M in {1,2,4,8,2048} and "
          "LLaMA-3.1 projection shapes Mx4096x4096, Mx1024x4096, "
-         "Mx14336x4096, Mx4096x14336 with M in {1,2048}.";
+         "Mx14336x4096, Mx4096x14336, plus Qwen3 Mx12288x4096 and "
+         "Mx4096x12288 with M in {1,2,4,8,2048}.";
 }
 
 template <typename T>
